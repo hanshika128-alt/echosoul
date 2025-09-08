@@ -310,7 +310,7 @@ if tab == "Legacy & Export":
         st.download_button("Click to download JSON", json.dumps(data, indent=2), f"echosoul_export_{datetime.datetime.utcnow().date()}.json", "application/json")
     st.markdown("---")
     st.write("Generate a simple 'Legacy snapshot' (human-readable timeline).")
-    legacy = "\\n\\n".join([f\"{it['timestamp']}: {it['title']} — {it['content']}\" for it in data['timeline']])
+    legacy = "\n\n".join([f"{it['timestamp']}: {it['title']} — {it['content']}" for it in data['timeline']])
     st.text_area("Legacy snapshot", legacy, height=300)
 
 if tab == "About":
