@@ -239,7 +239,7 @@ if tab == "Chat":
                 st.warning("Please type something.")
             else:
                 reply = generate_reply(data, user_input)
-                st.experimental_rerun()
+                st.rerun()
     with col2:
         if st.button("Add as memory"):
             if user_input.strip() == "":
