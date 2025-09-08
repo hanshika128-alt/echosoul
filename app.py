@@ -247,7 +247,7 @@ if tab == "Chat":
             else:
                 item = add_memory(data, "User added memory", user_input.strip())
                 st.success("Memory saved to timeline.")
-                st.experimental_rerun()
+                st.rerun()
 
 if tab == "Life Timeline":
     st.subheader("Life Timeline")
@@ -269,7 +269,7 @@ if tab == "Life Timeline":
         else:
             add_memory(data, ttitle or "Memory", tcontent.strip())
             st.success("Saved memory.")
-            st.experimental_rerun()
+            st.rerun()
 
 if tab == "Private Vault":
     st.subheader("Private Vault (encrypted notes)")
