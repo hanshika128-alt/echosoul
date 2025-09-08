@@ -18,7 +18,7 @@ Notes/Limitations:
 import streamlit as st
 import os, json, hashlib, base64, datetime, re
 
-DATA_FILE = "/mnt/data/echosoul_data.json"
+DATA_FILE = "echosoul_data.json"
 
 # ------------------------------
 # Simple storage helpers
