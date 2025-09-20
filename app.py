@@ -1,40 +1,87 @@
+"""
+EchoSoul — Prototype with GPT integration
+Now upgraded to use OpenAI for real AI replies.
+"""
+
 import streamlit as st
 import os, json, hashlib, base64, datetime, re
 from openai import OpenAI
 
-"""
-EchoSoul — Prototype App
-Author: Hanshika (Ishu)
-Description:
-An evolving digital companion that remembers, reflects, and adapts.
-"""
-
-# Initialize OpenAI client
+# Initialize OpenAI client with secret key from Streamlit settings
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-DATA_FILE = "data.json"
+# ------------------------------
+# Data storage
+# ------------------------------
+DATA_FILE = "echosoul_data.json"
 
-# ---------- Utility Functions ----------
+def ts_now():
+    return datetime.datetime.utcnow().isoformat() + "Z"
+
+def default_data():
+    return {
+        "profile": {
+            "name": "User",
+            "created": ts_now(),
+            "persona": {"tone": "friendly", "style": "casual"}
+        },
+        "timeline": [],
+        "vault": [],
+        "conversations": []
+    }
+
 def load_data():
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    else:
-        return {
-            "profile": {"name": "Hanshika", "nickname": "Ishu", "persona": {"tone": "warm"}},
-            "memories": [],
-            "timeline": [],
-            "conversations": []
-        }
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default_data()
+    return default_data()
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
-def ts_now():
-    return datetime.datetime.now().isoformat(timespec="seconds")
+# ------------------------------
+# Vault encryption (simple XOR, demo only)
+# ------------------------------
+def _derive_key(password, length):
+    h = hashlib.sha256(password.encode("utf-8")).digest()
+    return (h * (length // len(h) + 1))[:length]
 
-# ---------- AI Response ----------
+def encrypt_text(password, plaintext):
+    b = plaintext.encode("utf-8")
+    key = _derive_key(password, len(b))
+    x = bytes([b[i] ^ key[i] for i in range(len(b))])
+    return base64.b64encode(x).decode("utf-8")
+
+def decrypt_text(password, ciphertext_b64):
+    try:
+        data = base64.b64decode(ciphertext_b64.encode("utf-8"))
+        key = _derive_key(password, len(data))
+        x = bytes([data[i] ^ key[i] for i in range(len(data))])
+        return x.decode("utf-8")
+    except Exception:
+        return None
+
+# ------------------------------
+# Memories
+# ------------------------------
+def add_memory(data, title, content):
+    item = {
+        "id": hashlib.sha1((title + content + ts_now()).encode("utf-8")).hexdigest(),
+        "title": title,
+        "content": content,
+        "timestamp": ts_now()
+    }
+    data["timeline"].append(item)
+    save_data(data)
+    return item
+
+# ------------------------------
+# GPT-based reply
+# ------------------------------
 def generate_reply(data, user_msg):
     # Collect memory context (last 5 memories)
     memories = [f"{m['title']}: {m['content']}" for m in data['timeline'][-5:]]
@@ -65,33 +112,118 @@ def generate_reply(data, user_msg):
     save_data(data)
     return reply
 
-# ---------- Streamlit UI ----------
-def main():
-    st.set_page_config(page_title="EchoSoul", page_icon="✨")
-    st.title("✨ EchoSoul — Your Digital Reflection")
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+st.set_page_config(page_title="EchoSoul — Prototype", layout="centered")
 
-    data = load_data()
+st.title("EchoSoul — Prototype")
+st.write("A lightweight prototype of the EchoSoul concept, now powered by OpenAI for realistic conversation.")
 
-    # Input box
-    user_msg = st.text_input("Speak with EchoSoul:", "")
+# Load data
+data = load_data()
 
-    if user_msg:
-        reply = generate_reply(data, user_msg)
-        st.markdown(f"**EchoSoul:** {reply}")
+# Sidebar
+with st.sidebar:
+    st.header("Settings")
+    name = st.text_input("Your name", value=data["profile"].get("name","User"))
+    if st.button("Save profile name"):
+        data["profile"]["name"] = name
+        save_data(data)
+        st.success("Name saved.")
+    st.markdown("---")
+    st.markdown("**Vault** (prototype)")
+    vault_password = st.text_input("Vault password (used for encrypt/decrypt)", type="password")
+    if st.button("Clear vault password (local only)"):
+        vault_password = ""
+        st.info("Vault password cleared in this session.")
+    st.markdown("---")
+    st.checkbox("Enable adaptive learning (persona update)", value=True, key="adaptive_toggle")
 
-    # Show history
-    st.subheader("🗨️ Conversation History")
-    for c in data["conversations"][-5:]:
-        st.markdown(f"- **You:** {c['user']}")
-        st.markdown(f"  - **EchoSoul:** {c['bot']}")
+# Tabs
+tab = st.radio("", ["Chat","Life Timeline","Private Vault","Legacy & Export","About"])
 
-    # Show memories
-    st.subheader("📖 Memories & Timeline")
+if tab == "Chat":
+    st.subheader("Chat with your EchoSoul")
+    for conv in data.get("conversations",[])[-20:]:
+        st.markdown(f"**You:** {conv['user']}")
+        st.markdown(f"**EchoSoul:** {conv['bot']}")
+        st.markdown("---")
+    user_input = st.text_input("Say something to EchoSoul", key="chat_input")
+    if st.button("Send"):
+        if user_input.strip() == "":
+            st.warning("Please type something.")
+        else:
+            reply = generate_reply(data, user_input)
+            st.rerun()
+    if st.button("Add as memory"):
+        if user_input.strip() == "":
+            st.warning("Type the memory content in the box first.")
+        else:
+            item = add_memory(data, "User added memory", user_input.strip())
+            st.success("Memory saved to timeline.")
+            st.rerun()
+
+elif tab == "Life Timeline":
+    st.subheader("Life Timeline")
     if data["timeline"]:
-        for m in data["timeline"][-5:]:
-            st.markdown(f"- *{m['title']}* — {m['content']}")
+        for item in sorted(data["timeline"], key=lambda x:x["timestamp"], reverse=True):
+            st.markdown(f"**{item['title']}** — {item['timestamp']}")
+            st.write(item["content"])
+            st.markdown("---")
     else:
-        st.info("No memories yet. EchoSoul will build them as you chat.")
+        st.info("No memories yet.")
+    st.markdown("### Add new memory")
+    ttitle = st.text_input("Title", key="mem_title")
+    tcontent = st.text_area("Content", key="mem_content")
+    if st.button("Save Memory"):
+        if tcontent.strip() == "":
+            st.warning("Memory content cannot be empty.")
+        else:
+            add_memory(data, ttitle or "Memory", tcontent.strip())
+            st.success("Saved memory.")
+            st.rerun()
 
-if __name__ == "__main__":
-    main()
+elif tab == "Private Vault":
+    st.subheader("Private Vault (encrypted notes)")
+    if data["vault"]:
+        for v in data["vault"]:
+            st.markdown(f"**{v['title']}** — {v['timestamp']}")
+            if vault_password:
+                dec = decrypt_text(vault_password, v["cipher"])
+                if dec is not None:
+                    st.write(dec)
+                else:
+                    st.write("*Unable to decrypt with the provided password.*")
+            else:
+                st.write("*Password not provided in sidebar.*")
+            st.markdown("---")
+    else:
+        st.info("No vault items yet.")
+    st.markdown("### Add vault item")
+    vt = st.text_input("Title for vault item", key="vt")
+    vc = st.text_area("Secret content", key="vc")
+    if st.button("Save to Vault"):
+        if not vault_password:
+            st.warning("Set a vault password in the sidebar first.")
+        elif vc.strip() == "":
+            st.warning("Secret content cannot be empty.")
+        else:
+            cipher = encrypt_text(vault_password, vc.strip())
+            data["vault"].append({"title": vt or "Vault item", "cipher": cipher, "timestamp": ts_now()})
+            save_data(data)
+            st.success("Saved to vault.")
+
+elif tab == "Legacy & Export":
+    st.subheader("Legacy Mode & Export")
+    if st.button("Download full export (JSON)"):
+        st.download_button("Click to download JSON",
+                           json.dumps(data, indent=2),
+                           f"echosoul_export_{datetime.datetime.utcnow().date()}.json",
+                           "application/json")
+    legacy = "\n\n".join([f"{it['timestamp']}: {it['title']} — {it['content']}" for it in data['timeline']])
+    st.text_area("Legacy snapshot", legacy, height=300)
+
+elif tab == "About":
+    st.header("About this prototype")
+    st.write("This version uses OpenAI GPT for realistic replies, while keeping the timeline, vault, and export features.")
