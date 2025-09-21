@@ -460,4 +460,4 @@ elif tabs == "About":
     st.markdown("**Important:** Add OPENAI_API_KEY to Streamlit Secrets to enable GPT replies and audio transcription.")
 
 # Save data at end of request cycle (defensive)
-save_data(data
+save_data(data)
