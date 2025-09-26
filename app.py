@@ -1,3 +1,4 @@
+from typing import Optional
 """
 EchoSoul — Full app.py (clean, corrected, ready to paste)
 
