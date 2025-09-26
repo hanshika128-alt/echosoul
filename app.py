@@ -401,7 +401,7 @@ with st.sidebar:
 
     st.subheader("Profile")
     # Name field
-    pname = data["profile"].get("name") or ""
+    pname = data.get("profile", {}).get("name", "")
     new_name = st.text_input("Display name", value=pname)
     if st.button("Save name"):
         if new_name.strip():
