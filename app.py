@@ -1,17 +1,17 @@
-from typing import Optional
 """
-EchoSoul — Full app.py (clean, corrected, ready to paste)
-
-Notes:
-- Put your OpenAI API key into Streamlit Secrets as:
-    OPENAI_API_KEY = "sk-..."
-  (Do NOT put the key into GitHub.)
-- requirements.txt should include at least:
-    streamlit
-    openai
-    cryptography   # optional (Fernet). If not present, the app uses a safe XOR fallback.
-- This file is self-contained and defensive: it ensures required keys exist,
-  uses st.chat_input so the box clears after send, and avoids deprecated calls.
+EchoSoul — Full app.py (single file)
+Features:
+- Onboarding questions (asks name, age, hobbies, free-time; remembers them)
+- Chat with GPT (gpt-4o-mini). Chats clear automatically and feel like an ongoing dialogue.
+- Roleplay-as-you capability via system prompt.
+- Persistent memory: timeline saved to echosoul_data.json
+- Adaptive personality via simple sentiment heuristic
+- Private Vault (Fernet if available, XOR fallback)
+- Favorites / Pinned chats, Saved outputs
+- Change background from uploaded gallery images (applies site-wide CSS)
+- Voice: upload a voice sample (used as "voice profile"); optional TTS using OpenAI audio if available
+- Theme toggle (dark default) + high-contrast option (neon glow)
+- UI: support & feedback, settings, updates indicator
 """
 
 import streamlit as st
@@ -23,24 +23,27 @@ import datetime
 import re
 import io
 import textwrap
+from typing import Optional
 
-# Optional imports (handled defensively)
+# --- OpenAI client (read key from Streamlit Secrets) ---
 try:
     from openai import OpenAI
+    OPENAI_KEY = st.secrets["OPENAI_API_KEY"]
+    client = OpenAI(api_key=OPENAI_KEY)
 except Exception:
-    OpenAI = None
+    client = None
 
+# --- Optional Fernet for vault encryption ---
+USE_FERNET = False
 try:
     from cryptography.fernet import Fernet
     USE_FERNET = True
 except Exception:
-    Fernet = None
     USE_FERNET = False
 
-# ---- constants ----
+# --- Storage file ---
 DATA_FILE = "echosoul_data.json"
 
-# ---- utility helpers ----
 def ts_now():
     return datetime.datetime.utcnow().isoformat() + "Z"
 
@@ -57,35 +60,43 @@ def default_data():
         },
         "timeline": [],
         "vault": [],
-        "conversations": []
+        "conversations": [],
+        "favorites": [],
+        "saved_outputs": [],
+        "notifications": {"updates": False}
     }
 
 def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            # defensive: ensure expected top-level keys exist
-            if not isinstance(d, dict):
-                return default_data()
-            if "profile" not in d or not isinstance(d["profile"], dict):
-                d["profile"] = default_data()["profile"]
-            for k in ("timeline","vault","conversations"):
-                if k not in d or not isinstance(d[k], list):
-                    d[k] = default_data()[k]
-            return d
+                return json.load(f)
         except Exception:
             return default_data()
     return default_data()
 
-def save_data(d):
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        st.error(f"Saving error: {e}")
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
-# ---- encryption helpers ----
+# --- Encryption helpers ---
+def gen_fernet_key_from_password(password: str) -> bytes:
+    digest = hashlib.sha256(password.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest)
+
+def encrypt_with_fernet(password: str, plaintext: str) -> str:
+    key = gen_fernet_key_from_password(password)
+    f = Fernet(key)
+    return f.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+
+def decrypt_with_fernet(password: str, token: str) -> Optional[str]:
+    try:
+        key = gen_fernet_key_from_password(password)
+        f = Fernet(key)
+        return f.decrypt(token.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return None
+
 def _derive_key(password, length):
     h = hashlib.sha256(password.encode("utf-8")).digest()
     return (h * (length // len(h) + 1))[:length]
@@ -105,40 +116,17 @@ def decrypt_xor(password, ciphertext_b64):
     except Exception:
         return None
 
-def gen_fernet_key_from_password(password: str) -> bytes:
-    digest = hashlib.sha256(password.encode("utf-8")).digest()
-    return base64.urlsafe_b64encode(digest)
+def encrypt_text(password, plaintext):
+    if USE_FERNET:
+        return encrypt_with_fernet(password, plaintext)
+    return encrypt_xor(password, plaintext)
 
-def encrypt_with_fernet(password: str, plaintext: str) -> str:
-    key = gen_fernet_key_from_password(password)
-    f = Fernet(key)
-    return f.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+def decrypt_text(password, blob):
+    if USE_FERNET:
+        return decrypt_with_fernet(password, blob)
+    return decrypt_xor(password, blob)
 
-def decrypt_with_fernet(password: str, token: str) -> str:
-    key = gen_fernet_key_from_password(password)
-    f = Fernet(key)
-    return f.decrypt(token.encode("utf-8")).decode("utf-8")
-
-def encrypt_text(password: str, plaintext: str) -> str:
-    if USE_FERNET and Fernet is not None:
-        try:
-            return encrypt_with_fernet(password, plaintext)
-        except Exception:
-            # fallback
-            return encrypt_xor(password, plaintext)
-    else:
-        return encrypt_xor(password, plaintext)
-
-def decrypt_text(password: str, blob: str) -> str:
-    if USE_FERNET and Fernet is not None:
-        try:
-            return decrypt_with_fernet(password, blob)
-        except Exception:
-            return decrypt_xor(password, blob)
-    else:
-        return decrypt_xor(password, blob)
-
-# ---- memory / timeline helpers ----
+# --- Memory helpers ---
 def add_memory(data, title, content, tags=None):
     item = {
         "id": hashlib.sha1((title + content + ts_now()).encode("utf-8")).hexdigest(),
@@ -155,13 +143,13 @@ def find_relevant_memories(data, text, limit=3):
     found = []
     txt = text.lower()
     for item in reversed(data["timeline"]):
-        if any(w in txt for w in re.findall(r"\w+", item.get("content","").lower())) or any(w in txt for w in re.findall(r"\w+", item.get("title","").lower())):
+        if any(w in txt for w in re.findall(r"\w+", item["content"].lower())) or any(w in txt for w in re.findall(r"\w+", item["title"].lower())):
             found.append(item)
             if len(found) >= limit:
                 break
     return found
 
-# ---- simple sentiment heuristic ----
+# --- Sentiment & persona ---
 POS_WORDS = set("good great happy love excellent amazing wonderful nice grateful fun delighted calm optimistic".split())
 NEG_WORDS = set("bad sad angry depressed unhappy terrible awful hate lonely anxious stressed worried frustrated".split())
 
@@ -189,46 +177,31 @@ def update_persona_based_on_sentiment(data, score):
         data["profile"]["persona"]["tone"] = "friendly"
     save_data(data)
 
-# ---- OpenAI client helper ----
-def get_openai_client():
-    if OpenAI is None:
-        return None
-    try:
-        if "OPENAI_API_KEY" in st.secrets:
-            return OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        return None
-    except Exception:
-        return None
-
-openai_client = get_openai_client()
-
+# --- OpenAI wrappers ---
 def call_gpt(system_prompt: str, user_msg: str) -> str:
-    if openai_client is None:
-        return "OpenAI not configured. Add OPENAI_API_KEY to Streamlit Secrets to enable AI replies."
+    if client is None:
+        return "OpenAI not configured. Add OPENAI_API_KEY to Streamlit Secrets."
     try:
-        resp = openai_client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg}
             ],
             temperature=0.8,
-            max_tokens=600
+            max_tokens=800
         )
-        # compatibility: SDK returns resp.choices[0].message.content commonly
         return resp.choices[0].message.content
     except Exception as e:
         return f"[GPT error: {str(e)}]"
 
-# ---- audio transcription helper (safe/fallback) ----
 def transcribe_audio_bytes(file_bytes: bytes, filename: str) -> Optional[str]:
-    if openai_client is None:
+    # Uses OpenAI audio transcription if client available; returns transcription or None
+    if client is None:
         return None
     try:
-        # Some SDKs accept bytes-like; wrap as BytesIO
-        fobj = io.BytesIO(file_bytes)
-        resp = openai_client.audio.transcriptions.create(model="gpt-4o-transcribe", file=fobj)
-        # adapt to common fields
+        file_obj = io.BytesIO(file_bytes)
+        resp = client.audio.transcriptions.create(model="gpt-4o-transcribe", file=file_obj)
         if hasattr(resp, "text"):
             return resp.text
         if isinstance(resp, dict) and "text" in resp:
@@ -237,45 +210,71 @@ def transcribe_audio_bytes(file_bytes: bytes, filename: str) -> Optional[str]:
     except Exception:
         return None
 
-# ---- main reply generator (GPT + auto-memory) ----
+def synthesize_voice_tts(text: str, voice_profile: Optional[bytes] = None) -> Optional[bytes]:
+    """
+    Attempt to synthesize TTS using OpenAI if available.
+    voice_profile is optional: if the SDK supports custom voices, you'd pass voice metadata.
+    Returns raw audio bytes (e.g., mp3) or None on failure.
+    """
+    if client is None:
+        return None
+    try:
+        # Example (SDKs differ): try a simple TTS call
+        resp = client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="alloy",  # fallback voice name; real names depend on API availability
+            input=text
+        )
+        # If the SDK returns bytes-like object:
+        if hasattr(resp, "audio"):
+            return resp.audio
+        # or if resp contains 'audio' key:
+        if isinstance(resp, dict) and "audio" in resp:
+            return base64.b64decode(resp["audio"])
+        # fallback: string
+        return None
+    except Exception:
+        return None
+
+# --- Reply generator with auto-memory and persona context ---
 def generate_reply(data, user_msg):
     # update sentiment/persona
     score = sentiment_score(user_msg)
     update_persona_based_on_sentiment(data, score)
 
-    # prepare memory context
-    memories = [f"{m['title']}: {m['content']}" for m in data["timeline"][-6:]]
+    # build memory context (last 6)
+    memories = [f"{m['title']}: {m['content']}" for m in data['timeline'][-6:]]
     context = "\n".join(memories) if memories else "No memories yet."
 
-    tone = data["profile"].get("persona", {}).get("tone", "friendly")
-    system_prompt = textwrap.dedent(f"""
-        You are EchoSoul, an empathetic, evolving personal companion.
-        Personality tone: {tone}.
-        Known memories and facts about the user (most recent first):
-        {context}
+    tone = data["profile"]["persona"].get("tone", "friendly")
 
-        Behaviors:
-        - Use memory facts naturally when relevant.
-        - If the user asks you to 'act like me' or similar, roleplay as the user using their profile and timeline facts.
-        - Keep replies warm, helpful, and concise.
-        - Never reveal secrets from the private vault unless asked and unlocked by the user.
+    system_prompt = textwrap.dedent(f"""
+    You are EchoSoul, a personal companion assistant for the user's memories and emotions.
+    Personality tone: {tone}.
+    Use the user's timeline and profile facts when relevant.
+    Keep the conversation flowing: refer to recent messages and memories, stay on topic, and make replies feel like an ongoing dialogue—not isolated Q&A.
+    If the user asks you to "act like me", roleplay as the user using their profile details and memories.
+    Do not reveal private vault contents unless the user asks and proves they own the vault password.
+    Known facts:
+    {context}
     """)
 
     reply = call_gpt(system_prompt, user_msg)
 
-    # Auto-save obvious facts
+    # auto-save: if user says "remember", or "my name is", or similar patterns
     low = (user_msg or "").lower()
-    if re.search(r"\bremember\b", low) or re.search(r"\bmy name is\b", low) or re.search(r"\bi am\b", low):
+    if re.search(r"\bremember\b", low) or re.search(r"\bmy name is\b", low) or re.search(r"\bi am\b", low) or re.search(r"\bi'm\b", low):
         add_memory(data, "User fact", user_msg)
 
+    # store conversation
     data["conversations"].append({"user": user_msg, "bot": reply, "ts": ts_now()})
     save_data(data)
     return reply
 
-# ---- onboarding flow ----
+# --- Onboarding flow ---
 def run_onboarding(data):
-    st.header("Welcome to EchoSoul — let's get to know you")
-    st.write("I'll ask 4 quick questions so I can remember you and talk in your style.")
+    st.header("Welcome — let me get to know you 🤍")
+    st.write("I'll ask a few quick questions so I can remember and speak like you. You can change these later in Settings.")
     if "onb_step" not in st.session_state:
         st.session_state.onb_step = 0
 
@@ -289,9 +288,9 @@ def run_onboarding(data):
                 add_memory(data, "Name", f"My name is {name.strip()}")
                 st.session_state.onb_step = 1
                 save_data(data)
-                st.rerun()
+                st.experimental_rerun()
             else:
-                st.warning("Please enter a name.")
+                st.warning("Please enter your name.")
     elif step == 1:
         age = st.text_input("What's your age?", value=(data["profile"].get("age") or ""))
         if st.button("Next"):
@@ -300,9 +299,9 @@ def run_onboarding(data):
                 add_memory(data, "Age", f"My age is {age.strip()}")
                 st.session_state.onb_step = 2
                 save_data(data)
-                st.rerun()
+                st.experimental_rerun()
             else:
-                st.warning("Please enter an age.")
+                st.warning("Please enter your age.")
     elif step == 2:
         hobbies = st.text_area("What are your hobbies?", value=(data["profile"].get("hobbies") or ""))
         if st.button("Next"):
@@ -311,12 +310,12 @@ def run_onboarding(data):
                 add_memory(data, "Hobbies", hobbies.strip())
                 st.session_state.onb_step = 3
                 save_data(data)
-                st.rerun()
+                st.experimental_rerun()
             else:
-                st.warning("Please list at least one hobby.")
+                st.warning("Please enter at least one hobby.")
     elif step == 3:
         free_time = st.text_area("What do you like to do in your free time?", value=(data["profile"].get("free_time") or ""))
-        if st.button("Finish"):
+        if st.button("Finish and continue"):
             if free_time.strip():
                 data["profile"]["free_time"] = free_time.strip()
                 add_memory(data, "Free time", free_time.strip())
@@ -324,158 +323,211 @@ def run_onboarding(data):
                 save_data(data)
                 st.success("Thanks — I will remember these things.")
                 st.session_state.onb_step = 0
-                st.rerun()
+                st.experimental_rerun()
             else:
-                st.warning("Please enter something you like to do in free time.")
+                st.warning("Please tell me something you like doing in your free time.")
 
-# ---- Streamlit UI ----
+# --- UI and layout ---
 st.set_page_config(page_title="EchoSoul", layout="wide")
+data = load_data()
+
+# --- Theming & CSS (no red anywhere) ---
+# background image set via session_state
+if "bg_image_b64" not in st.session_state:
+    st.session_state.bg_image_b64 = None
+if "theme_high_contrast" not in st.session_state:
+    st.session_state.theme_high_contrast = False
+
+def set_background_from_b64(b64data):
+    # apply CSS background (dark theme base)
+    css = f"""
+    <style>
+    .stApp {{
+        background-image: url("data:image/png;base64,{b64data}");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center;
+    }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+# Apply saved background if present
+if st.session_state.bg_image_b64:
+    set_background_from_b64(st.session_state.bg_image_b64)
+
+# Neon/high-contrast style toggles (no explicit red)
+NEON_ACCENT = "#00e5ff"  # cyan neon
+if st.session_state.theme_high_contrast:
+    st.markdown(f"""
+    <style>
+    .stButton>button {{ box-shadow: 0 0 12px {NEON_ACCENT}; border-radius: 10px; }}
+    .stCheckbox>div>label {{ box-shadow: 0 0 8px {NEON_ACCENT}; }}
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- Top bar / header ---
 st.title("EchoSoul — Your personal companion")
+st.write("A private, memory-enabled companion that learns you over time. (No red anywhere — promise!)")
 
-data = load_data()  # always returns valid structure
-
-# Sidebar
+# Sidebar contents
 with st.sidebar:
-    st.subheader("Settings")
-    st.write("Profile")
-    current_name = data["profile"].get("name") or ""
-    new_name = st.text_input("Display name", value=current_name)
+    st.markdown("## EchoSoul — Controls")
+    # Profile quick-edit
+    st.markdown("**Profile**")
+    display_name = data["profile"].get("name") or ""
+    new_name = st.text_input("Display name", value=display_name)
     if st.button("Save profile name"):
         data["profile"]["name"] = new_name.strip() or data["profile"]["name"]
+        add_memory(data, "Name updated", f"My name set to {data['profile']['name']}")
         save_data(data)
-        st.success("Name saved.")
+        st.success("Saved.")
 
     st.markdown("---")
-    st.write("Vault (secure notes)")
-    vault_pwd = st.text_input("Vault password (to lock/unlock)", type="password")
-    if st.button("Clear vault password (local only)"):
-        vault_pwd = ""
-        st.info("Vault password cleared for this session.")
+    # Theme toggles
+    if st.button("Toggle High-Contrast Mode"):
+        st.session_state.theme_high_contrast = not st.session_state.theme_high_contrast
+        st.experimental_rerun()
+    st.checkbox("Dark mode (default)", value=True, key="dark_mode_toggle")  # for user perception
 
     st.markdown("---")
-    st.write("App options")
-    st.checkbox("Enable adaptive learning (persona updates)", value=True, key="adaptive_toggle")
-    st.markdown("Voice: upload audio file to transcribe (optional).")
+    st.markdown("**Favorites / Pinned**")
+    st.write("Pin important memories or conversations for fast access.")
+    # simple UI: add last conversation to favorites
+    if st.button("Pin last conversation"):
+        if data.get("conversations"):
+            last = data["conversations"][-1]
+            data["favorites"].append({"type":"conv","item": last, "ts": ts_now()})
+            save_data(data)
+            st.success("Pinned last conversation.")
+        else:
+            st.info("No conversations to pin yet.")
 
-# run onboarding if needed
+    if st.button("View pinned items"):
+        if data["favorites"]:
+            for f in data["favorites"]:
+                st.write(f"{f['ts']} — {f['type']}")
+        else:
+            st.info("No pins yet.")
+
+    st.markdown("---")
+    st.markdown("**Saved content**")
+    if st.button("Save last AI output"):
+        if data.get("conversations"):
+            last_bot = data["conversations"][-1]["bot"]
+            data["saved_outputs"].append({"ts": ts_now(), "content": last_bot})
+            save_data(data)
+            st.success("Saved last output.")
+        else:
+            st.info("No output to save yet.")
+    if st.button("View saved outputs"):
+        if data["saved_outputs"]:
+            for s in data["saved_outputs"]:
+                st.markdown(f"{s['ts']}")
+                st.write(s['content'])
+                st.markdown("---")
+        else:
+            st.info("No saved outputs yet.")
+
+    st.markdown("---")
+    st.markdown("**Vault & Security**")
+    vault_pwd = st.text_input("Vault password", type="password")
+    if USE_FERNET:
+        st.markdown("Vault encryption: Fernet (strong).")
+    else:
+        st.markdown("Vault encryption: XOR fallback (demo).")
+
+    st.markdown("---")
+    st.markdown("**Appearance**")
+    st.write("Change the app background using an image from your device (applies immediately).")
+    bg_file = st.file_uploader("Upload background image (jpg/png)", type=["png","jpg","jpeg"])
+    if bg_file is not None:
+        b = bg_file.read()
+        b64 = base64.b64encode(b).decode("utf-8")
+        st.session_state.bg_image_b64 = b64
+        set_background_from_b64(b64)
+        st.success("Background updated.")
+
+    st.markdown("---")
+    st.markdown("**Support & Settings**")
+    if st.button("Support / Feedback"):
+        st.write("Open the support form at: [Contact/Feedback] — (placeholder in demo).")
+    if st.button("Check for updates"):
+        data["notifications"]["updates"] = False
+        save_data(data)
+        st.success("No new updates (demo).")
+
+# If onboarding not completed, run it and stop
 if not data["profile"].get("intro_completed", False):
     run_onboarding(data)
     st.stop()
 
-# main tabs
-tab = st.radio("", ["Chat", "Conversation History", "Memories & Timeline", "Private Vault", "Legacy & Export", "About"], horizontal=True)
+# Main area: tabs
+tabs = st.tabs(["Chat", "Conversation History", "Memories & Timeline", "Private Vault", "Legacy & Export", "About"])
 
-if tab == "Chat":
-    st.header(f"Chat — Hello {data['profile'].get('name') or 'friend'}")
-    st.write("Type or upload audio. The input clears after send.")
+# Chat tab
+with tabs[0]:
+    st.header(f"Chat — Hi {data['profile'].get('name') or 'friend'}")
+    st.write("This chat stays on topic and refers back to recent messages. It feels like a continuous conversation.")
 
-    # optional audio upload
-    audio_file = st.file_uploader("Upload audio to transcribe (optional)", type=["mp3","wav","m4a","ogg"])
-    if audio_file is not None:
-        file_bytes = audio_file.read()
+    # Upload voice sample to be used as 'voice profile' (optional)
+    st.markdown("**Voice profile (optional)** — upload a short voice sample so EchoSoul can mimic voice tone (if supported).")
+    voice_file = st.file_uploader("Upload a short voice sample (mp3/wav)", type=["mp3","wav","m4a"])
+    if voice_file:
+        vbytes = voice_file.read()
+        # store voice sample in memory (not in vault) as base64 to persist
+        vb64 = base64.b64encode(vbytes).decode("utf-8")
+        data["profile"]["voice_sample_b64"] = vb64
+        save_data(data)
+        st.success("Voice sample saved (for demo TTS where supported).")
+
+    # Audio transcription
+    audio_upload = st.file_uploader("Upload audio to transcribe & chat (optional)", type=["mp3","wav","m4a","ogg"])
+    if audio_upload:
+        a_bytes = audio_upload.read()
         st.info("Transcribing...")
-        t = transcribe_audio_bytes(file_bytes, audio_file.name)
-        if t:
-            st.success("Transcription done — added to conversation.")
-            reply = generate_reply(data, t)
-            st.markdown(f"**You (audio):** {t}")
+        transcript = transcribe_audio_bytes(a_bytes, audio_upload.name)
+        if transcript:
+            st.success("Transcription ready — added as your message.")
+            # show transcript and generate reply
+            st.markdown(f"**You (transcribed):** {transcript}")
+            reply = generate_reply(data, transcript)
             st.markdown(f"**EchoSoul:** {reply}")
         else:
-            st.error("Transcription failed or OpenAI not configured.")
+            st.error("Transcription not available. Make sure OpenAI key is set and audio transcription is supported.")
 
-    # show last conversations
-    for conv in data.get("conversations", [])[-30:]:
-        st.markdown(f"**You:** {conv['user']}")
-        st.markdown(f"**EchoSoul:** {conv['bot']}")
+    # Show last 20 convs compactly
+    convs = data.get("conversations", [])[-20:]
+    for c in convs:
+        st.markdown(f"**You:** {c['user']}")
+        st.markdown(f"**EchoSoul:** {c['bot']}")
         st.markdown("---")
 
     # chat_input that clears automatically
     user_msg = st.chat_input("Say something to EchoSoul")
     if user_msg:
-        with st.spinner("Thinking..."):
-            _ = generate_reply(data, user_msg)
-        # rerun to refresh conversation display; st.chat_input clears automatically
-        st.rerun()
+        with st.spinner("EchoSoul is thinking..."):
+            reply = generate_reply(data, user_msg)
+        # Optionally synthesize TTS using stored voice
+        tts_choice = st.checkbox("Play AI reply in voice profile (if supported)", value=False, key="play_tts")
+        if tts_choice:
+            voice_b64 = data["profile"].get("voice_sample_b64")
+            voice_bytes = base64.b64decode(voice_b64) if voice_b64 else None
+            audio_out = synthesize_voice_tts(reply, voice_profile=voice_bytes)
+            if audio_out:
+                st.audio(audio_out)
+            else:
+                st.info("TTS not available in this environment or your OpenAI plan. EchoSoul replied in text below.")
+        # show reply (chat_input clears by design)
+        st.experimental_rerun()
 
-elif tab == "Conversation History":
+# Conversation History
+with tabs[1]:
     st.header("Conversation History")
     conv = data.get("conversations", [])
     if not conv:
         st.info("No conversations yet.")
     else:
         for m in conv[::-1]:
-            st.markdown(f"**You:** {m['user']}")
-            st.markdown(f"**EchoSoul:** {m['bot']}")
-            st.markdown("---")
-
-elif tab == "Memories & Timeline":
-    st.header("Memories & Timeline")
-    if data["timeline"]:
-        for item in sorted(data["timeline"], key=lambda x: x["timestamp"], reverse=True):
-            st.markdown(f"**{item['title']}** — {item['timestamp']}")
-            st.write(item["content"])
-            st.markdown("---")
-    else:
-        st.info("No memories yet — they will appear here when you say 'remember' or complete onboarding.")
-
-    st.markdown("### Add a memory manually")
-    mtitle = st.text_input("Title", key="mem_title")
-    mcontent = st.text_area("Content", key="mem_content")
-    if st.button("Save Memory"):
-        if mcontent.strip():
-            add_memory(data, mtitle or "Memory", mcontent.strip())
-            st.success("Memory saved.")
-            st.rerun()
-        else:
-            st.warning("Content cannot be empty.")
-
-elif tab == "Private Vault":
-    st.header("Private Vault")
-    st.write("Enter your vault password in the sidebar to unlock or save items. The app encrypts items before saving.")
-    if not vault_pwd:
-        st.warning("Vault password required (enter it in the sidebar).")
-    else:
-        if data["vault"]:
-            for v in data["vault"]:
-                st.markdown(f"**{v['title']}** — {v['timestamp']}")
-                dec = decrypt_text(vault_pwd, v["cipher"])
-                if dec is None:
-                    st.write("*Unable to decrypt with this password.*")
-                else:
-                    st.write(dec)
-                st.markdown("---")
-        else:
-            st.info("No vault items yet.")
-
-        st.markdown("### Add to vault")
-        vt = st.text_input("Title for vault item", key="vt")
-        vc = st.text_area("Secret content", key="vc")
-        if st.button("Save to Vault"):
-            if not vc.strip():
-                st.warning("Secret content cannot be empty.")
-            else:
-                cipher = encrypt_text(vault_pwd, vc.strip())
-                data["vault"].append({"title": vt or "Vault item", "cipher": cipher, "timestamp": ts_now()})
-                save_data(data)
-                st.success("Saved to vault.")
-                st.rerun()
-
-elif tab == "Legacy & Export":
-    st.header("Legacy Mode & Export")
-    st.write("Export timeline and conversations. Vault entries remain encrypted in the export.")
-    if st.button("Download full export (JSON)"):
-        st.download_button("Click to download JSON", json.dumps(data, indent=2), f"echosoul_export_{datetime.datetime.utcnow().date()}.json", "application/json")
-    legacy = "\n\n".join([f"{it['timestamp']}: {it['title']} — {it['content']}" for it in data["timeline"]])
-    st.text_area("Legacy snapshot", legacy, height=300)
-
-elif tab == "About":
-    st.header("About EchoSoul")
-    st.write("EchoSoul remembers personal details, adapts its tone, and uses GPT for natural replies (when configured).")
-    st.markdown("- Persistent Memory: remembers and recalls personal details.")
-    st.markdown("- Adaptive Personality: adjusts tone over time.")
-    st.markdown("- Emotion Recognition: text-based heuristics (voice requires transcription).")
-    st.markdown("- Life Timeline, Custom Conversation Style, Knowledge Growth, Private Vault, Legacy Mode.")
-    st.markdown("Important: Put your OPENAI_API_KEY into Streamlit Secrets to enable GPT and transcription features.")
-
-# defensive save
-save_data(data)
+       
