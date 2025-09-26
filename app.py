@@ -487,4 +487,4 @@ with tabs[0]:
                 st.caption(f"Why: {ex}")
             # show confidence heuristic if present
             if "confidence_heuristic" in entry:
-                st.caption(f"Confidence (heuristic): 
+                st.caption(f"Confidence (heuristic): {entry['confidence_heuristic']:.2f}")
