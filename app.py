@@ -481,4 +481,4 @@ with tab3:
 # -------------------------
 with tab4:
     st.header("Private Vault (Prototype)")
-    st.write("Save sensitive notes. This uses XOR demo encryption unless `cryptography` is installed (Fernet). Ke
+    st.write("Save sensitive notes. This uses XOR demo encryption unless cryptography is installed for Fernet.")
