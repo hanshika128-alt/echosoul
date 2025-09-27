@@ -1,72 +1,30 @@
-# EchoSoul — Your Personal AI Companion
+# ✨ EchoSoul
 
-EchoSoul is a **personal AI companion with persistent memory**, adaptive personality, a private vault, and a life timeline.  
-It is built with **Streamlit** + **OpenAI GPT (gpt-4o-mini)** and designed to feel like an ongoing dialogue, not isolated Q&A.
-
----
-
-## ✨ Features
-
-### 1. Conversational AI
-- Uses **OpenAI GPT** for natural replies.
-- Stays on topic and refers back to past messages.
-- Feels like a continuous conversation.
-- Can roleplay as you if you ask it to.
-- Adapts tone automatically:
-  - Positive → energetic  
-  - Negative → empathetic  
-  - Neutral → friendly  
-
-### 2. Persistent Memory
-- All facts & conversations are stored in `echosoul_data.json`.
-- **Life Timeline**: add, view, and browse memories chronologically.
-- Add memories manually or directly from chat.
-- Memories influence future replies.
-
-### 3. Adaptive Personality
-- Built-in **sentiment analysis** tunes EchoSoul’s tone.
-- Learns your style over time.
-
-### 4. Private Vault (Prototype)
-- Store sensitive notes in a **password-protected vault**.
-- Uses **Fernet encryption** if available, otherwise XOR fallback.
-- ⚠️ Prototype only — not meant for real cryptography.
-
-### 5. Legacy & Export
-- Export all data as JSON.
-- Generate a **Legacy Snapshot** (human-readable timeline of your life events).
-
-### 6. Profile Settings
-- On first launch, EchoSoul asks:
-  - What’s your name?  
-  - What’s your age?  
-  - What are your hobbies?  
-  - What do you like to do in your free time?  
-- These are remembered forever (and editable later).
-
-### 7. Customization
-- Change the app background with any image from your gallery.
-- Dark mode by default, with a **neon high-contrast mode**.
-- Upload a voice sample — EchoSoul can (optionally) reply in your voice using TTS.
-
-### 8. Sidebar Navigation
-- **Profile**: Edit your name & settings.  
-- **Favorites / Pinned**: Save frequently used chats & memories.  
-- **Saved Content**: Store important AI outputs.  
-- **Vault**: Lock away private notes.  
-- **Appearance**: Upload background images.  
-- **Support & Feedback**: Access help docs or send feedback.  
-- **Theme Toggle**: Switch between dark & neon high-contrast.  
-- **Updates**: Small notification badge for new features.  
+**EchoSoul** is a personal AI companion built with [Streamlit](https://streamlit.io).  
+It remembers you, adapts its personality, and grows with you over time.
 
 ---
 
-## 🖥️ Deployment
+## 🌟 Features
+- **Conversational AI** — uses OpenAI GPT (`gpt-4o-mini`) for natural dialogue.
+- **Persistent Memory** — stores facts & memories in `echosoul_data.json`.
+- **Adaptive Personality** — adjusts tone (friendly / empathetic / energetic).
+- **Life Timeline** — view, add, and manage significant memories.
+- **Private Vault** — save encrypted notes with your own password (XOR demo or Fernet if `cryptography` installed).
+- **Legacy Export** — export all your data (chat + memories + vault) as JSON.
+- **Profile Settings** — set your name, age, hobbies, free-time.
+- **Light & Dark Mode** — Neon dark theme by default, toggle to light theme.
+- **Explainability & Trust**  
+  - Shows persona tone and heuristic confidence.  
+  - Lets you add/delete memories manually.  
+  - All data stays local (`echosoul_data.json`).  
 
-EchoSoul runs **fully in the cloud** via [Streamlit](https://streamlit.io/).  
-You can open it anytime from your browser, including on tablets like the Xiaomi Pad.
+---
 
-### 1. Clone this repo
-```bash
-git clone https://github.com/your-username/echosoul.git
-cd echosoul
+## 🚀 Deployment
+1. **Clone or fork this repo** into your GitHub.
+2. Create a free [Streamlit Cloud](https://streamlit.io/cloud) account.
+3. Deploy the repo → select `app.py` as the main file.
+4. In **Streamlit Secrets**, add your OpenAI API key:
+   ```toml
+   OPENAI_API_KEY = "sk-..."
