@@ -500,4 +500,4 @@ with tabs[0]:
         # generate reply with selected voice (if not "default")
         chosen_voice = data.get("settings", {}).get("tts_voice")
         chosen_voice_param = None if chosen_voice in (None, "default") else chosen_voice
-        with st.spinner("EchoSoul is thinkin
+        with st.spinner("EchoSoul is thinkin)
