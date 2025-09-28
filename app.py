@@ -1,4 +1,13 @@
 # app.py
+"""
+EchoSoul — Personal AI companion (single-file Streamlit app)
+
+Instructions:
+- Put your OpenAI key in Streamlit secrets as OPENAI_API_KEY, or set the env var OPENAI_API_KEY.
+- `pip install streamlit openai` (requirements: streamlit, openai)
+- Deploy to Streamlit Cloud or run locally: `streamlit run app.py`
+"""
+
 import streamlit as st
 import openai
 import json
@@ -6,36 +15,35 @@ import os
 import base64
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import List, Dict
 
-# ---------------------------
-# Configuration
-# ---------------------------
+# -------------------------
+# Config
+# -------------------------
 st.set_page_config(page_title="EchoSoul", page_icon="⚡", layout="wide")
 DATA_FILE = "echosoul_data.json"
-MODEL_NAME = "gpt-4o-mini"  # change if needed
+MODEL_NAME = "gpt-4o-mini"        # change if needed
 DEFAULT_TEMP = 0.7
 NEON = "#3EE7A8"
 DARK_BG = "#0D0D2E"
 LIGHT_BG = "#F6F7FB"
 
-# Load OpenAI key from Streamlit secrets or env var
-openai.api_key = st.secrets.get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
+# Load OpenAI key
+openai.api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 
-# ---------------------------
-# Utilities
-# ---------------------------
+# -------------------------
+# Utilities: data + crypto (XOR prototype)
+# -------------------------
 def ensure_datafile():
     if not os.path.exists(DATA_FILE):
-        initial = {
+        base = {
             "profile": {"name": "", "preferred_tone": "Adaptive", "voice_enabled": False, "created_at": datetime.utcnow().isoformat()},
             "memories": [],
             "vault": {"entries": []},
             "conversations": []
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(initial, f, indent=2, ensure_ascii=False)
+            json.dump(base, f, indent=2, ensure_ascii=False)
 
 def read_data() -> Dict:
     ensure_datafile()
@@ -47,23 +55,26 @@ def write_data(obj: Dict):
         json.dump(obj, f, indent=2, ensure_ascii=False)
 
 def xor_encrypt(plaintext: str, password: str) -> str:
-    if password is None or password == "":
-        raise ValueError("Password required for encryption.")
-    btxt = plaintext.encode("utf-8")
-    bpass = password.encode("utf-8")
-    out = bytearray()
-    for i, c in enumerate(btxt):
-        out.append(c ^ bpass[i % len(bpass)])
-    return base64.b64encode(bytes(out)).decode("utf-8")
-
-def xor_decrypt(b64cipher: str, password: str) -> str:
-    b = base64.b64decode(b64cipher)
-    bpass = password.encode("utf-8")
+    if not password:
+        raise ValueError("Password required.")
+    b = plaintext.encode("utf-8")
+    kp = password.encode("utf-8")
     out = bytearray()
     for i, c in enumerate(b):
-        out.append(c ^ bpass[i % len(bpass)])
+        out.append(c ^ kp[i % len(kp)])
+    return base64.b64encode(bytes(out)).decode("utf-8")
+
+def xor_decrypt(b64: str, password: str) -> str:
+    b = base64.b64decode(b64)
+    kp = password.encode("utf-8")
+    out = bytearray()
+    for i, c in enumerate(b):
+        out.append(c ^ kp[i % len(kp)])
     return out.decode("utf-8")
 
+# -------------------------
+# Heuristics
+# -------------------------
 def simple_sentiment(text: str) -> str:
     t = text.lower()
     pos = sum(t.count(w) for w in ["good","great","happy","love","awesome","nice","fantastic","helpful","yes"])
@@ -74,10 +85,10 @@ def simple_sentiment(text: str) -> str:
         return "negative"
     return "neutral"
 
-def confidence_heuristic(ai_text: str) -> float:
+def confidence_heuristic(text: str) -> float:
     hedges = ["might","could","maybe","possibly","it depends","i think","i believe"]
     score = 0.85
-    lower = ai_text.lower()
+    lower = text.lower()
     for h in hedges:
         if h in lower:
             score -= 0.12
@@ -87,70 +98,46 @@ def confidence_heuristic(ai_text: str) -> float:
         score -= 0.3
     return max(0.05, min(0.99, round(score,2)))
 
-def call_openai_chat(prompt: str, system_role: str, memory_snippets: List[str], temp: float) -> Dict:
-    # Prepare messages
+# -------------------------
+# OpenAI wrapper
+# -------------------------
+def call_openai_chat(prompt: str, system_role: str, memory_snippets: List[str], temperature: float = DEFAULT_TEMP) -> Dict:
     messages = [{"role":"system", "content": system_role}]
     if memory_snippets:
         mem_block = "Relevant memories:\n" + "\n".join(f"- {m}" for m in memory_snippets[-6:])
         messages.append({"role":"system","content": mem_block})
     messages.append({"role":"user","content": prompt})
-
     try:
         resp = openai.ChatCompletion.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=temp,
-            max_tokens=800,
+            temperature=temperature,
+            max_tokens=800
         )
         text = resp.choices[0].message["content"]
         return {"text": text, "raw": resp, "error": None}
     except Exception as e:
         return {"text": f"⚠️ AI call failed: {str(e)}", "raw": None, "error": str(e)}
 
-# ---------------------------
-# CSS / UI helpers
-# ---------------------------
+# -------------------------
+# Inject CSS for neon / glass
+# -------------------------
 def inject_css():
     st.markdown(f"""
     <style>
-    :root {{
-      --neon: {NEON};
-      --bg-dark: {DARK_BG};
-      --bg-light: {LIGHT_BG};
-    }}
-    .top-right-call {{
-      position: fixed;
-      top: 18px;
-      right: 18px;
-      z-index: 9999;
-      background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
-      border: 1px solid rgba(255,255,255,0.04);
-      padding: 10px 14px;
-      border-radius: 12px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
-      color: white;
-      display:flex;
-      gap:8px;
-      align-items:center;
-      cursor:pointer;
-    }}
-    .neon-text {{ color: var(--neon); text-shadow: 0 0 10px rgba(62,231,168,0.15); }}
-    .glass {{
-      background: rgba(255,255,255,0.02);
-      border-radius: 12px;
-      padding: 12px;
-      border: 1px solid rgba(255,255,255,0.04);
-      backdrop-filter: blur(6px);
-    }}
-    .tiny-muted {{ color: #B8C0D0; font-size:12px; }}
+    :root{{ --neon: {NEON}; --bg-dark: {DARK_BG}; --bg-light: {LIGHT_BG}; }}
+    .neon-text {{ color: var(--neon); text-shadow: 0 0 12px rgba(62,231,168,0.15); font-weight:700; }}
+    .glass {{ background: rgba(255,255,255,0.02); border-radius:12px; padding:12px; border:1px solid rgba(255,255,255,0.04); backdrop-filter: blur(6px); }}
+    .topcall {{ position: fixed; top:18px; right:18px; z-index:9999; padding:10px 14px; border-radius:12px; cursor:pointer; border:1px solid rgba(255,255,255,0.04); background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); }}
+    .tiny-muted {{ color:#B8C0D0; font-size:12px; }}
     </style>
     """, unsafe_allow_html=True)
 
 inject_css()
 
-# ---------------------------
-# Session defaults
-# ---------------------------
+# -------------------------
+# Session state defaults
+# -------------------------
 if "onboarded" not in st.session_state:
     st.session_state["onboarded"] = False
 if "conversation" not in st.session_state:
@@ -160,21 +147,21 @@ if "last_ai_trace" not in st.session_state:
 if "vault_pass" not in st.session_state:
     st.session_state["vault_pass"] = ""
 
-# ---------------------------
-# Onboarding (ask a few questions at start)
-# ---------------------------
+# -------------------------
+# Onboarding (asks a few intro questions)
+# -------------------------
 data = read_data()
 profile = data.get("profile", {})
 
 if not st.session_state["onboarded"]:
-    st.markdown("<div style='display:flex;gap:12px;align-items:center'><h1 class='neon-text'>⚡ Welcome to EchoSoul</h1><div class='tiny-muted'>Your personal AI companion</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<h1 class='neon-text'>⚡ Welcome to EchoSoul</h1>", unsafe_allow_html=True)
     st.markdown("Let's get you set up — this only takes a moment.")
-    with st.form("onboard", clear_on_submit=False):
+    with st.form("onboard_form", clear_on_submit=False):
         name = st.text_input("What should I call you?", value=profile.get("name",""))
-        tone = st.selectbox("Preferred default tone:", ["Adaptive", "Friendly", "Empathetic", "Energetic", "Formal"], index=["Adaptive","Friendly","Empathetic","Energetic","Formal"].index(profile.get("preferred_tone","Adaptive")) if profile.get("preferred_tone") else 0)
+        tone = st.selectbox("Preferred default tone:", ["Adaptive", "Friendly", "Empathetic", "Energetic", "Formal"], index=0)
         voice_enabled = st.checkbox("Enable voice responses (prototype)?", value=profile.get("voice_enabled", False))
-        submit_onboard = st.form_submit_button("Save & Continue")
-    if submit_onboard:
+        submitted = st.form_submit_button("Save & Continue")
+    if submitted:
         profile["name"] = name
         profile["preferred_tone"] = tone
         profile["voice_enabled"] = voice_enabled
@@ -182,15 +169,16 @@ if not st.session_state["onboarded"]:
         data["profile"] = profile
         write_data(data)
         st.session_state["onboarded"] = True
-        st.experimental_rerun()
+        st.success("Onboarding saved. Welcome — you can continue using EchoSoul below.")
+        # No st.experimental_rerun() — continue in same run
     else:
         st.stop()
 
-# ---------------------------
-# Layout: sidebar + main area
-# ---------------------------
+# -------------------------
+# Sidebar layout
+# -------------------------
 with st.sidebar:
-    st.markdown(f"<div style='display:flex;align-items:center;gap:10px'><div style='width:44px;height:44px;border-radius:10px;background:{NEON};box-shadow:0 6px 14px rgba(62,231,168,0.12)'></div><div><h3 style='margin:0'>EchoSoul</h3><div class='tiny-muted'>Personal AI companion</div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='display:flex;gap:10px;align-items:center'><div style='width:44px;height:44px;border-radius:10px;background:{NEON};box-shadow:0 6px 14px rgba(62,231,168,0.12)'></div><div><h3 style='margin:0'>EchoSoul</h3><div class='tiny-muted'>Your personal AI companion</div></div></div>", unsafe_allow_html=True)
     st.markdown("---")
     page = st.radio("Navigation", ["Chat", "Life Timeline", "Vault", "Legacy & Export", "Settings"], index=0)
     st.markdown("---")
@@ -201,80 +189,76 @@ with st.sidebar:
         st.markdown(f"<style>body{{background:{LIGHT_BG};color:#0D0D2E}}</style>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("**Prototype Vault** — not secure encryption (XOR demo).")
-    st.text("OpenAI model: " + MODEL_NAME)
+    st.markdown(f"Model: `{MODEL_NAME}`")
     st.markdown("---")
     if st.button("Export Data (JSON)"):
-        current = read_data()
-        st.download_button("Download JSON", json.dumps(current, indent=2, ensure_ascii=False), file_name="echosoul_export.json")
+        cur = read_data()
+        st.download_button("Download JSON", json.dumps(cur, indent=2, ensure_ascii=False), file_name="echosoul_export.json")
 
-# floating call AI button (pure UI)
+# Floating Call AI button (UI only)
 st.markdown("""
-<div class="top-right-call" onclick="window.location.hash='call-ai'">
+<div class="topcall glass" onclick="window.location.hash='call-ai'">
   <div style="font-weight:700">Call AI</div>
-  <div class='tiny-muted' style='font-size:12px'>Quick chat</div>
+  <div class="tiny-muted" style="font-size:12px">Quick chat</div>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------------------
-# Chat Page
-# ---------------------------
+# -------------------------
+# Pages
+# -------------------------
 if page == "Chat":
+    # Header
     st.markdown(f"<h2 class='neon-text'>Hello, {profile.get('name','Friend')} 👋</h2>", unsafe_allow_html=True)
-    st.markdown("<div class='tiny-muted'>This conversation is ongoing — EchoSoul keeps context and suggests memories to save.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='tiny-muted'>Ongoing conversation — input auto-clears after send.</div>", unsafe_allow_html=True)
     st.markdown("")
 
-    # display conversation
+    # Show conversation messages
     for m in st.session_state["conversation"]:
         if m["role"] == "user":
             st.markdown(f"<div class='glass' style='margin-bottom:8px'><strong>{profile.get('name','You')}</strong> <span class='tiny-muted'>• {m.get('ts','')}</span><div style='margin-top:6px'>{m['content']}</div></div>", unsafe_allow_html=True)
         else:
             conf = m.get("confidence")
-            conf_html = ""
-            if conf:
-                conf_html = f"<div class='tiny-muted' style='margin-top:8px'>Confidence: <strong style='color:{NEON}'>{int(conf*100)}%</strong></div>"
+            conf_html = f"<div class='tiny-muted' style='margin-top:8px'>Confidence: <strong style='color:{NEON}'>{int(conf*100)}%</strong></div>" if conf is not None else ""
             st.markdown(f"<div class='glass' style='margin-bottom:8px'><strong class='neon-text'>EchoSoul</strong> <span class='tiny-muted'>• {m.get('ts','')}</span><div style='margin-top:6px'>{m['content']}</div>{conf_html}</div>", unsafe_allow_html=True)
 
-    # form for sending (clears on submit)
-    with st.form(key="chat_form", clear_on_submit=True):
-        user_text = st.text_area("Type to EchoSoul", key="user_text", placeholder="Ask a question, tell a memory, or say 'roleplay'...", height=120)
+    # Input form — clears on submit
+    with st.form("chat_form", clear_on_submit=True):
+        user_text = st.text_area("Type to EchoSoul", height=120, placeholder="Ask a question, add a memory, or say 'roleplay'...")
         col1, col2, col3 = st.columns([1,1,1])
         with col1:
             roleplay = st.checkbox("Roleplay as you", value=False)
         with col2:
-            tone_select = st.selectbox("Tone", ["Adaptive", "Friendly", "Empathetic", "Energetic", "Formal"], index=0)
+            tone_choice = st.selectbox("Tone", ["Adaptive", "Friendly", "Empathetic", "Energetic", "Formal"], index=0)
         with col3:
             temp = st.slider("Creativity", 0.0, 1.0, DEFAULT_TEMP, step=0.05)
-        send_btn = st.form_submit_button("Send")
+        sent = st.form_submit_button("Send")
 
-    if send_btn and user_text.strip():
+    if sent and user_text.strip():
         ts = datetime.utcnow().isoformat()
         st.session_state["conversation"].append({"role":"user","content":user_text,"ts":ts})
-        # choose tone instruction
-        if tone_select == "Adaptive":
-            sentiment = simple_sentiment(user_text)
-            if sentiment == "positive":
-                tone_instruction = "Respond in an energetic and uplifting tone."
-            elif sentiment == "negative":
-                tone_instruction = "Respond in an empathetic, calming tone."
-            else:
-                tone_instruction = "Respond in a friendly, neutral tone."
+
+        # Build system role based on tone and sentiment
+        tone_instruction = ""
+        if tone_choice == "Adaptive":
+            sent_label = simple_sentiment(user_text)
+            tone_instruction = "Respond in an energetic tone." if sent_label=="positive" else ("Respond in an empathetic, calming tone." if sent_label=="negative" else "Respond in a friendly, neutral tone.")
         else:
-            tone_instruction = f"Respond in a {tone_select.lower()} tone."
+            tone_instruction = f"Respond in a {tone_choice.lower()} tone."
 
-        system_role = f"You are EchoSoul, a helpful assistant. {tone_instruction} Be transparent, show brief reasoning and a confidence estimate."
+        system_role = f"You are EchoSoul, a helpful assistant. {tone_instruction} Be transparent about limitations and show a short confidence estimate."
 
-        # prepare memories (naive retrieval: last 5)
+        # Memory retrieval (naive: last 5 memories)
         data = read_data()
-        mems = [m["text"] for m in data.get("memories", [])[-5:]]
+        memories = [m["text"] for m in data.get("memories", [])[-5:]]
 
-        ai_res = call_openai_chat(user_text, system_role, mems, temp)
-        ai_text = ai_res["text"]
-        conf = None
-        if not ai_res.get("error"):
-            conf = confidence_heuristic(ai_text)
+        # Call OpenAI
+        ai_result = call_openai_chat(user_text, system_role, memories, temp)
+        ai_text = ai_result["text"]
+        conf = None if ai_result.get("error") else confidence_heuristic(ai_text)
 
         st.session_state["conversation"].append({"role":"ai","content":ai_text,"ts":datetime.utcnow().isoformat(),"confidence":conf})
-        # Save conversation snapshot to data
+
+        # Save short conversation snapshot
         data.setdefault("conversations", []).append({
             "time": datetime.utcnow().isoformat(),
             "user": user_text,
@@ -282,41 +266,35 @@ if page == "Chat":
             "meta": {"model": MODEL_NAME, "temp": temp}
         })
         write_data(data)
-        # store last ai trace for explainability pane
-        st.session_state["last_ai_trace"] = {
-            "prompt": user_text,
-            "memories_used": mems,
-            "model": MODEL_NAME,
-            "temperature": temp,
-            "confidence": conf
-        }
-        # don't call any session_state direct editing of widget values; form cleared automatically.
 
-    # Explainability / trace
+        # Set explainability trace
+        st.session_state["last_ai_trace"] = {"prompt": user_text, "memories_used": memories, "model": MODEL_NAME, "temperature": temp, "confidence": conf}
+
+    # Explainability pane
     st.markdown("---")
     st.header("Explainable AI (XAI) — Trace")
-    last = st.session_state.get("last_ai_trace")
-    if last:
-        st.markdown(f"**Model**: `{last['model']}`  ")
-        st.markdown(f"**Temperature**: {last['temperature']}")
+    trace = st.session_state.get("last_ai_trace")
+    if trace:
+        st.markdown(f"**Model:** `{trace['model']}`  ")
+        st.markdown(f"**Temperature:** {trace['temperature']}")
         st.markdown("**Prompt you sent**")
-        st.code(last["prompt"][:400])
+        st.code(trace["prompt"][:400])
         st.markdown("**Memories included**")
-        if last["memories_used"]:
-            for mm in last["memories_used"]:
-                st.write(f"- {mm[:120]}")
+        if trace["memories_used"]:
+            for mm in trace["memories_used"]:
+                st.write(f"- {mm[:140]}")
         else:
             st.write("_No recent memories used._")
         st.markdown("**Confidence (heuristic)**")
-        if last["confidence"] is not None:
-            st.progress(last["confidence"])
-            st.write(f"{int(last['confidence']*100)}% (heuristic)")
+        if trace["confidence"] is not None:
+            st.progress(trace["confidence"])
+            st.write(f"{int(trace['confidence']*100)}% (heuristic)")
     else:
-        st.write("Your next AI reply will show a short explainability trace here.")
+        st.write("After the next reply you'll see a short explainability trace.")
 
-# ---------------------------
-# Life Timeline Page
-# ---------------------------
+# -------------------------
+# Life Timeline
+# -------------------------
 elif page == "Life Timeline":
     st.header("📅 Life Timeline")
     data = read_data()
@@ -326,12 +304,12 @@ elif page == "Life Timeline":
         st.subheader("Saved memories")
         if memories:
             for m in sorted(memories, key=lambda x: x.get("created_at",""), reverse=True):
-                st.markdown(f"- **{m.get('created_at','')[:10]}** — {m.get('text')[:200]}")
+                st.markdown(f"- **{m.get('created_at','')[:10]}** — {m.get('text')[:220]}")
         else:
-            st.info("No memories yet. Add memories from chat or here.")
+            st.info("No memories yet.")
     with colB:
         st.subheader("Add memory")
-        new_mem = st.text_area("Memory text", key="new_mem_text", height=120)
+        new_mem = st.text_area("Memory text", key="timeline_new_mem", height=120)
         if st.button("Save memory"):
             if new_mem.strip():
                 mem = {"id": str(int(time.time()*1000)), "text": new_mem.strip(), "tags": [], "created_at": datetime.utcnow().isoformat()}
@@ -341,22 +319,21 @@ elif page == "Life Timeline":
             else:
                 st.warning("Cannot save empty memory.")
 
-# ---------------------------
-# Vault Page
-# ---------------------------
+# -------------------------
+# Vault
+# -------------------------
 elif page == "Vault":
     st.header("🔐 Private Vault (Prototype)")
     data = read_data()
-    vp = st.text_input("Enter vault password (session-only)", type="password", key="vault_pass_input")
+    vp = st.text_input("Vault password (session only)", type="password", key="vault_pw_input")
     if vp:
         st.session_state["vault_pass"] = vp
-        st.success("Vault loaded in session (prototype).")
-    st.markdown("Add private note:")
-    title = st.text_input("Title", key="vault_title")
-    note = st.text_area("Content", key="vault_content", height=120)
-    if st.button("Save to Vault"):
+        st.success("Vault password stored in session (prototype).")
+    title = st.text_input("Title for note", key="vault_title")
+    note = st.text_area("Private note", key="vault_note", height=140)
+    if st.button("Save to vault"):
         if not st.session_state.get("vault_pass"):
-            st.warning("Set a vault password first in the field above.")
+            st.warning("Set a vault password in the field above.")
         elif not note.strip():
             st.warning("Cannot save empty note.")
         else:
@@ -364,9 +341,9 @@ elif page == "Vault":
             entry = {"id": str(int(time.time()*1000)), "title": title or "Untitled", "encrypted": enc, "created_at": datetime.utcnow().isoformat()}
             data.setdefault("vault", {}).setdefault("entries", []).append(entry)
             write_data(data)
-            st.success("Saved to vault (prototype XOR).")
+            st.success("Saved to vault (XOR prototype).")
     st.markdown("---")
-    st.subheader("Vault entries (decrypted if password set)")
+    st.subheader("Entries")
     entries = data.get("vault", {}).get("entries", [])
     if entries:
         for e in entries:
@@ -381,31 +358,30 @@ elif page == "Vault":
     else:
         st.info("No vault entries yet.")
 
-# ---------------------------
+# -------------------------
 # Legacy & Export
-# ---------------------------
+# -------------------------
 elif page == "Legacy & Export":
     st.header("📜 Legacy & Export")
     data = read_data()
-    st.markdown("Download your full data (memories, vault metadata, conversations)")
-    st.download_button("Download data (JSON)", json.dumps(data, indent=2, ensure_ascii=False), file_name="echosoul_export.json")
+    st.download_button("⬇️ Download Data (JSON)", json.dumps(data, indent=2, ensure_ascii=False), file_name="echosoul_export.json")
     st.markdown("---")
-    st.subheader("Legacy Snapshot (human-readable)")
-    st.markdown("**Profile**")
+    st.subheader("Legacy Snapshot")
+    st.write("**Profile:**")
     st.write(data.get("profile", {}))
-    st.markdown("**Recent memories**")
+    st.write("**Recent memories:**")
     for m in data.get("memories", [])[-10:]:
         st.markdown(f"- {m.get('created_at','')} — {m.get('text')[:200]}")
 
-# ---------------------------
+# -------------------------
 # Settings
-# ---------------------------
+# -------------------------
 elif page == "Settings":
     st.header("⚙️ Settings")
     data = read_data()
     prof = data.get("profile", {})
     new_name = st.text_input("Display name", value=prof.get("name",""))
-    new_tone = st.selectbox("Default tone", ["Adaptive","Friendly","Empathetic","Energetic","Formal"], index=["Adaptive","Friendly","Empathetic","Energetic","Formal"].index(prof.get("preferred_tone","Adaptive")))
+    new_tone = st.selectbox("Default tone", ["Adaptive","Friendly","Empathetic","Energetic","Formal"], index=0)
     voice_toggle = st.checkbox("Enable voice responses (prototype)", value=prof.get("voice_enabled", False))
     if st.button("Save settings"):
         prof["name"] = new_name
@@ -415,8 +391,8 @@ elif page == "Settings":
         write_data(data)
         st.success("Settings saved.")
 
-# ---------------------------
+# -------------------------
 # Footer / privacy note
-# ---------------------------
+# -------------------------
 st.markdown("---")
-st.markdown("<div class='tiny-muted'>Privacy: EchoSoul stores data locally in <code>echosoul_data.json</code>. Vault encryption is a demo (XOR) — not secure. Do not store production secrets unless you replace with real encryption. The AI may be fallible; use the explainability trace to review answers.</div>", unsafe_allow_html=True)
+st.markdown("<div class='tiny-muted'>Privacy: EchoSoul stores data locally in <code>echosoul_data.json</code>. Vault encryption is a demo (XOR) — not secure. Do not store production secrets unless you replace with proper encryption. The AI may be fallible; use the explainability trace to review answers.</div>", unsafe_allow_html=True)
