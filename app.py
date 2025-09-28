@@ -83,13 +83,16 @@ if st.button("Send"):
         # Save user message
         st.session_state.history.append({"role": "user", "content": user_input})
 
-        # Call OpenAI
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=st.session_state.history
-        )
+        # Call OpenAI API
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=st.session_state.history
+            )
+            ai_reply = response.choices[0].message.content
+        except Exception as e:
+            ai_reply = f"⚠️ API Error: {e}"
 
-        ai_reply = response.choices[0].message.content
         st.session_state.history.append({"role": "assistant", "content": ai_reply})
 
         # Text-to-Speech with gTTS
