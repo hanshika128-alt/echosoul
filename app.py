@@ -12,12 +12,11 @@ def ts_now():
 # Load/Save
 def load_data():
     if os.path.exists(DATA_FILE):
-        return json.load(open(DATA_FILE, "r"))
-    return {
-        "profile": {},
-        "timeline": [],
-        "conversations": []
-    }
+        try:
+            return json.load(open(DATA_FILE, "r"))
+        except:
+            return {}
+    return {}
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
@@ -25,8 +24,16 @@ def save_data(data):
 
 data = load_data()
 
+# Make sure keys exist
+if "profile" not in data:
+    data["profile"] = {}
+if "timeline" not in data:
+    data["timeline"] = []
+if "conversations" not in data:
+    data["conversations"] = []
+
 # If no profile → ask for introduction
-if not data["profile"]:
+if not data.get("profile"):
     st.title("✨ Welcome to EchoSoul")
     with st.form("intro_form"):
         name = st.text_input("Your Name")
@@ -41,7 +48,7 @@ if not data["profile"]:
             "persona": {"tone": "friendly"}
         }
         save_data(data)
-        st.success("Profile saved! Reload the app to start chatting.")
+        st.success("✅ Profile saved! Please reload the app to start chatting.")
         st.stop()
 
 # Generate AI reply
