@@ -2,20 +2,19 @@ import streamlit as st
 import os, json, datetime
 from openai import OpenAI
 
-# Initialize OpenAI
+# Init OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
 DATA_FILE = "echosoul_data.json"
 
 def ts_now():
     return datetime.datetime.now().isoformat(timespec="seconds")
 
-# Load / Save
+# Load/Save
 def load_data():
     if os.path.exists(DATA_FILE):
         return json.load(open(DATA_FILE, "r"))
     return {
-        "profile": {"name": "Hanshika", "age": 15, "hobbies": [], "persona": {"tone": "friendly"}},
+        "profile": {},
         "timeline": [],
         "conversations": []
     }
@@ -26,14 +25,33 @@ def save_data(data):
 
 data = load_data()
 
-# AI reply
-def generate_reply(data, user_msg):
+# If no profile → ask for introduction
+if not data["profile"]:
+    st.title("✨ Welcome to EchoSoul")
+    with st.form("intro_form"):
+        name = st.text_input("Your Name")
+        age = st.number_input("Your Age", min_value=5, max_value=100, step=1)
+        hobbies = st.text_area("Your Hobbies (comma separated)")
+        submitted = st.form_submit_button("Save & Continue")
+    if submitted and name:
+        data["profile"] = {
+            "name": name,
+            "age": int(age),
+            "hobbies": [h.strip() for h in hobbies.split(",") if h.strip()],
+            "persona": {"tone": "friendly"}
+        }
+        save_data(data)
+        st.success("Profile saved! Reload the app to start chatting.")
+        st.stop()
+
+# Generate AI reply
+def generate_reply(user_msg):
     memories = [f"{m['title']}: {m['content']}" for m in data['timeline'][-5:]]
     context = "\n".join(memories) if memories else "No memories yet."
-    tone = data["profile"]["persona"].get("tone", "friendly")
+    tone = data["profile"].get("persona", {}).get("tone", "friendly")
 
     system_prompt = f"""
-    You are EchoSoul, Hanshika's evolving AI companion.
+    You are EchoSoul, {data['profile']['name']}'s evolving AI companion.
     Tone: {tone}
     Known memories:\n{context}
     Always reply warmly and naturally.
@@ -46,42 +64,52 @@ def generate_reply(data, user_msg):
             {"role": "user", "content": user_msg}
         ]
     )
-
     reply = response.choices[0].message.content
     data["conversations"].append({"user": user_msg, "bot": reply, "ts": ts_now()})
     save_data(data)
     return reply
 
-# --- UI ---
+# --- UI Layout ---
 st.set_page_config(page_title="EchoSoul", layout="wide")
 
-st.title("✨ EchoSoul — Your AI Companion")
+with st.sidebar:
+    st.header("⚙️ Voice Settings")
+    st.radio("Choose AI voice", ["alloy", "verse", "amber"])
+    st.file_uploader("Upload short voice sample (mp3/wav)", type=["mp3", "wav"])
+    st.header("🖼️ Background Wallpaper")
+    st.file_uploader("Upload wallpaper", type=["jpg", "png"])
+    st.header("🔒 Settings")
+    st.toggle("Enable adaptive learning", value=True)
+    st.caption("Privacy & Ethics: Local storage • Inclusive design • Bias mitigation")
+    st.markdown("---")
+    st.subheader("📂 Navigate")
+    st.radio("Go to", ["🏠 Home", "💬 Chat", "📞 Voice Call", "🧠 Life Timeline", "🔐 Vault", "📤 Export", "ℹ️ About"])
+
+st.title("💬 EchoSoul Chat")
 
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
-# Chat display with bubbles
+# Show conversation with bubbles
 for msg in st.session_state["messages"]:
     if msg["role"] == "user":
         st.markdown(
-            f"<div style='text-align: right; background-color: #DCF8C6; padding: 8px; border-radius: 10px; margin:5px; display:inline-block;'>"
-            f"**You:** {msg['content']}</div>",
-            unsafe_allow_html=True
+            f"<div style='text-align:right; background:#DCF8C6; padding:8px; border-radius:10px; margin:5px; display:inline-block;'>"
+            f"**You:** {msg['content']}</div>", unsafe_allow_html=True
         )
     else:
         st.markdown(
-            f"<div style='text-align: left; background-color: #F1F0F0; padding: 8px; border-radius: 10px; margin:5px; display:inline-block;'>"
-            f"**EchoSoul:** {msg['content']}</div>",
-            unsafe_allow_html=True
+            f"<div style='text-align:left; background:#F1F0F0; padding:8px; border-radius:10px; margin:5px; display:inline-block;'>"
+            f"**EchoSoul:** {msg['content']}</div>", unsafe_allow_html=True
         )
 
-# Input at bottom
-with st.form("chat_input", clear_on_submit=True):  # 👈 clears automatically
-    user_input = st.text_input("Type here...", "")
+# Input box → clears after send
+with st.form("chat_form", clear_on_submit=True):
+    user_input = st.text_input("Say something to EchoSoul...")
     submitted = st.form_submit_button("Send")
 
 if submitted and user_input:
     st.session_state["messages"].append({"role": "user", "content": user_input})
-    reply = generate_reply(data, user_input)
+    reply = generate_reply(user_input)
     st.session_state["messages"].append({"role": "assistant", "content": reply})
     st.rerun()
