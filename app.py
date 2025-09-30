@@ -4,7 +4,7 @@ from openai import OpenAI
 from pathlib import Path
 import tempfile
 
-# Initialize OpenAI client
+# Initialize OpenAI client (make sure API key is in secrets or env)
 client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
 st.set_page_config(page_title="EchoSoul", layout="wide")
@@ -18,11 +18,10 @@ if "voice_file" not in st.session_state:
     st.session_state["voice_file"] = None
 if "user_name" not in st.session_state:
     st.session_state["user_name"] = "User"
-if "chat_input" not in st.session_state:
-    st.session_state["chat_input"] = ""
 
 # --- Helper Functions ---
 def ask_model(messages, model="gpt-4o-mini"):
+    """Send conversation to GPT and return reply"""
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -35,6 +34,7 @@ def ask_model(messages, model="gpt-4o-mini"):
         return f"[Error contacting OpenAI API: {e}]"
 
 def transcribe_audio(file_path):
+    """Transcribe speech to text"""
     try:
         with open(file_path, "rb") as af:
             transcript_resp = client.audio.transcriptions.create(
@@ -46,6 +46,7 @@ def transcribe_audio(file_path):
         return f"[Transcription error: {e}]"
 
 def tts_reply(text, output_path="reply.mp3"):
+    """Generate speech audio from text"""
     try:
         with client.audio.speech.with_streaming_response.create(
             model="gpt-4o-mini-tts",
@@ -54,7 +55,7 @@ def tts_reply(text, output_path="reply.mp3"):
         ) as response:
             response.stream_to_file(output_path)
         return output_path
-    except Exception as e:
+    except Exception:
         return None
 
 # --- Sidebar ---
@@ -110,15 +111,15 @@ if page == "💬 Chat":
         else:
             st.markdown(f"<div style='background:#3498db;color:white;padding:8px;border-radius:10px;margin:5px;'>EchoSoul: {msg['content']}</div>", unsafe_allow_html=True)
 
-    chat_input = st.text_input("Say something...", value=st.session_state["chat_input"], key="chat_input_box", placeholder="Type here and press Enter...")
+    chat_input = st.text_input("Say something...", key="chat_input", placeholder="Type here and press Enter...")
 
-    if st.button("Send") and chat_input.strip():
+    if st.button("Send", key="send_btn") and chat_input.strip():
         # Add user msg
         st.session_state["messages"].append({"role": "user", "content": chat_input})
         # Model reply
         reply = ask_model(st.session_state["messages"])
         st.session_state["messages"].append({"role": "assistant", "content": reply})
-        # Clear input
+        # Clear input + refresh
         st.session_state["chat_input"] = ""
         st.rerun()
 
