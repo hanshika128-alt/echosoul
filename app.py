@@ -9,7 +9,7 @@ client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPEN
 
 st.set_page_config(page_title="EchoSoul", layout="wide")
 
-# --- Session State Setup ---
+# --- Session State ---
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "wallpaper" not in st.session_state:
@@ -18,11 +18,11 @@ if "voice_file" not in st.session_state:
     st.session_state["voice_file"] = None
 if "user_name" not in st.session_state:
     st.session_state["user_name"] = "User"
+if "chat_input" not in st.session_state:
+    st.session_state["chat_input"] = ""
 
 # --- Helper Functions ---
-
 def ask_model(messages, model="gpt-4o-mini"):
-    """Ask GPT model and return response text."""
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -35,7 +35,6 @@ def ask_model(messages, model="gpt-4o-mini"):
         return f"[Error contacting OpenAI API: {e}]"
 
 def transcribe_audio(file_path):
-    """Transcribe audio using Whisper."""
     try:
         with open(file_path, "rb") as af:
             transcript_resp = client.audio.transcriptions.create(
@@ -47,7 +46,6 @@ def transcribe_audio(file_path):
         return f"[Transcription error: {e}]"
 
 def tts_reply(text, output_path="reply.mp3"):
-    """Convert text to speech (TTS)."""
     try:
         with client.audio.speech.with_streaming_response.create(
             model="gpt-4o-mini-tts",
@@ -71,6 +69,7 @@ if wallpaper_file:
     tmp_wall = Path(tempfile.gettempdir()) / wallpaper_file.name
     tmp_wall.write_bytes(wallpaper_file.getvalue())
     st.session_state["wallpaper"] = str(tmp_wall)
+
 if st.sidebar.button("Apply wallpaper") and st.session_state["wallpaper"]:
     st.markdown(
         f"""
@@ -111,16 +110,14 @@ if page == "💬 Chat":
         else:
             st.markdown(f"<div style='background:#3498db;color:white;padding:8px;border-radius:10px;margin:5px;'>EchoSoul: {msg['content']}</div>", unsafe_allow_html=True)
 
-    chat_input = st.text_input("Say something...", key="chat_input", placeholder="Type here and press Enter...")
+    chat_input = st.text_input("Say something...", value=st.session_state["chat_input"], key="chat_input_box", placeholder="Type here and press Enter...")
 
     if st.button("Send") and chat_input.strip():
-        # User message
+        # Add user msg
         st.session_state["messages"].append({"role": "user", "content": chat_input})
-
-        # Ask model
+        # Model reply
         reply = ask_model(st.session_state["messages"])
         st.session_state["messages"].append({"role": "assistant", "content": reply})
-
         # Clear input
         st.session_state["chat_input"] = ""
         st.rerun()
@@ -129,7 +126,7 @@ if page == "💬 Chat":
 elif page == "📞 Call":
     st.subheader("Real Call with EchoSoul")
 
-    audio_input = st.file_uploader("Upload your voice (mp3/wav) or record externally", type=["mp3", "wav"])
+    audio_input = st.file_uploader("Upload your voice (mp3/wav)", type=["mp3", "wav"])
     if audio_input:
         tmp_in = Path(tempfile.gettempdir()) / audio_input.name
         tmp_in.write_bytes(audio_input.getvalue())
@@ -150,11 +147,11 @@ elif page == "📞 Call":
 
 # --- Timeline Page ---
 elif page == "🧠 Life Timeline":
-    st.info("Life Timeline: Coming soon — record your key life events.")
+    st.info("Life Timeline: Coming soon.")
 
 # --- Vault Page ---
 elif page == "🔒 Vault":
-    st.warning("Vault feature coming soon (encrypted storage).")
+    st.warning("Vault feature coming soon.")
 
 # --- Export Page ---
 elif page == "📜 Export":
@@ -162,4 +159,4 @@ elif page == "📜 Export":
 
 # --- About Page ---
 elif page == "ℹ️ About":
-    st.markdown("EchoSoul is your evolving digital companion with memory, adaptive personality, and voice interaction.")
+    st.markdown("EchoSoul is your evolving digital companion.")
