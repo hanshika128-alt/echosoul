@@ -19,7 +19,7 @@ if "voice_file" not in st.session_state:
 if "user_name" not in st.session_state:
     st.session_state["user_name"] = "User"
 if "chat_input" not in st.session_state:
-    st.session_state["chat_input"] = ""   # init safely
+    st.session_state["chat_input"] = ""
 
 # --- Helper Functions ---
 def ask_model(messages, model="gpt-4o-mini"):
@@ -106,6 +106,7 @@ page = st.radio("Navigate", ["💬 Chat", "📞 Call", "🧠 Life Timeline", "�
 if page == "💬 Chat":
     st.subheader("Chat with EchoSoul")
 
+    # Display previous messages
     for msg in st.session_state["messages"]:
         role = msg["role"]
         if role == "user":
@@ -113,16 +114,17 @@ if page == "💬 Chat":
         else:
             st.markdown(f"<div style='background:#3498db;color:white;padding:8px;border-radius:10px;margin:5px;'>EchoSoul: {msg['content']}</div>", unsafe_allow_html=True)
 
-    chat_input = st.text_input("Say something...", key="chat_input", placeholder="Type here and press Enter...")
+    # Input box
+    chat_val = st.text_input("Say something...", value=st.session_state["chat_input"], key="chat_box", placeholder="Type here and press Enter...")
 
-    if st.button("Send", key="send_btn") and st.session_state["chat_input"].strip():
-        # Add user msg
-        st.session_state["messages"].append({"role": "user", "content": st.session_state["chat_input"]})
-        # Model reply
+    if st.button("Send", key="send_btn") and chat_val.strip():
+        st.session_state["messages"].append({"role": "user", "content": chat_val})
         reply = ask_model(st.session_state["messages"])
         st.session_state["messages"].append({"role": "assistant", "content": reply})
-        # Reset input safely
-        st.session_state.chat_input = ""
+
+        # clear the input correctly
+        st.session_state["chat_input"] = ""
+        st.session_state["chat_box"] = ""
         st.rerun()
 
 # --- Call Page ---
@@ -134,32 +136,23 @@ elif page == "📞 Call":
         tmp_in = Path(tempfile.gettempdir()) / audio_input.name
         tmp_in.write_bytes(audio_input.getvalue())
 
-        # Transcribe
         user_text = transcribe_audio(str(tmp_in))
         st.write(f"🗣 You said: {user_text}")
 
-        # Model reply
         reply = ask_model([{"role": "user", "content": user_text}])
         st.write(f"EchoSoul says: {reply}")
 
-        # TTS playback
         out_file = tts_reply(reply)
         if out_file:
             audio_bytes = open(out_file, "rb").read()
             st.audio(audio_bytes, format="audio/mp3")
 
-# --- Timeline Page ---
+# --- Other Pages ---
 elif page == "🧠 Life Timeline":
     st.info("Life Timeline: Coming soon.")
-
-# --- Vault Page ---
 elif page == "🔒 Vault":
     st.warning("Vault feature coming soon.")
-
-# --- Export Page ---
 elif page == "📜 Export":
     st.success("Export feature coming soon.")
-
-# --- About Page ---
 elif page == "ℹ️ About":
     st.markdown("EchoSoul is your evolving digital companion.")
