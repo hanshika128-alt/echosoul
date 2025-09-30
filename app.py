@@ -91,8 +91,8 @@ if choice == "💬 Chat":
             reply = response.choices[0].message.content
             st.session_state["history"].append({"role": "assistant", "content": reply})
 
-            # Clear input properly
-            st.experimental_rerun()
+            # Clear input properly (fixed with st.rerun)
+            st.rerun()
 
     for h in st.session_state["history"]:
         if h["role"] == "user":
