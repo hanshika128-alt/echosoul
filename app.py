@@ -44,8 +44,8 @@ if "wallpaper" in st.session_state:
     st.markdown(f"""
     <style>
     .stApp {{
-        background: url('{st.session_state["wallpaper"]}') no-repeat center center fixed;
-        background-size: cover;
+        background: url('{st.session_state["wallpaper"]}') no-repeat center center fixed !important;
+        background-size: cover !important;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -62,10 +62,10 @@ if choice == "💬 Chat":
     if "history" not in st.session_state:
         st.session_state["history"] = []
 
-    user_input = st.text_input("Say something...", key="chat_input")
+    user_input = st.text_input("Say something...", key="chat_input", value="", placeholder="Type here and press Enter...")
     if st.button("Send"):
-        if user_input:
-            st.session_state["history"].append({"role": "user", "content": user_input})
+        if user_input.strip():
+            st.session_state["history"].append({"role": "user", "content": user_input.strip()})
 
             # Persistent memory context
             memory_context = " ".join([m["text"] for m in data["memories"][-5:]])
@@ -79,6 +79,9 @@ if choice == "💬 Chat":
             reply = response.choices[0].message.content
             st.session_state["history"].append({"role": "assistant", "content": reply})
 
+            # Clear chat input after sending
+            st.session_state["chat_input"] = ""
+
     for h in st.session_state["history"]:
         if h["role"] == "user":
             st.markdown(f"<div style='background:#6a0dad;padding:8px;border-radius:8px;margin:4px;color:white;'>You: {h['content']}</div>", unsafe_allow_html=True)
@@ -89,10 +92,12 @@ if choice == "💬 Chat":
 elif choice == "📞 Call":
     st.subheader("Talk with EchoSoul")
 
-    call_input = st.text_input("What do you want to say? (simulating call)")
+    # Voice selection
+    voice_choice = st.selectbox("Choose EchoSoul's Voice", ["Neutral", "Female", "Male"])
+
+    call_input = st.text_input("What do you want to say? (simulating call)", key="call_input")
     if st.button("Speak"):
-        if call_input:
-            # Generate AI reply
+        if call_input.strip():
             convo = [{"role": "system", "content": "You are EchoSoul, adaptive voice persona."}]
             convo.append({"role": "user", "content": call_input})
 
@@ -102,18 +107,27 @@ elif choice == "📞 Call":
             )
             reply = response.choices[0].message.content
 
-            # Inject browser speech synthesis JS
+            # Map voice choice to JS voice names (depends on browser voices)
+            voice_map = {
+                "Neutral": "",
+                "Female": "Google UK English Female",
+                "Male": "Google UK English Male"
+            }
+            chosen_voice = voice_map.get(voice_choice, "")
+
             speak_js = f"""
             <script>
             (function(){{
-              const utter = new SpeechSynthesisUtterance(`{reply}`);
+              var utter = new SpeechSynthesisUtterance("{reply}");
               utter.rate = 1;
               utter.pitch = 1;
+              var voices = window.speechSynthesis.getVoices();
+              var selectedVoice = voices.find(v => v.name === "{chosen_voice}");
+              if (selectedVoice) {{
+                  utter.voice = selectedVoice;
+              }}
               window.speechSynthesis.cancel();
               window.speechSynthesis.speak(utter);
-              const u = new URL(window.location);
-              u.searchParams.delete('call_msg');
-              window.history.replaceState({{}}, document.title, u.pathname + u.search);
             }})();
             </script>
             """
@@ -160,6 +174,7 @@ elif choice == "ℹ️ About":
     EchoSoul is your evolving AI companion:
     - ✅ Remembers your memories
     - ✅ Talks in adaptive style
-    - ✅ Can be called with voice
+    - ✅ Can be called with voice (choose Male/Female/Neutral)
     - ✅ Preserves your legacy
+    - ✅ Wallpaper customization
     """)
