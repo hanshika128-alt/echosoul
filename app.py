@@ -4,12 +4,12 @@ from openai import OpenAI
 from pathlib import Path
 import tempfile
 
-# Initialize OpenAI client (make sure API key is in secrets or env)
+# --- Init OpenAI Client ---
 client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
 st.set_page_config(page_title="EchoSoul", layout="wide")
 
-# --- Session State ---
+# --- Session State Init ---
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "wallpaper" not in st.session_state:
@@ -18,6 +18,8 @@ if "voice_file" not in st.session_state:
     st.session_state["voice_file"] = None
 if "user_name" not in st.session_state:
     st.session_state["user_name"] = "User"
+if "chat_input" not in st.session_state:
+    st.session_state["chat_input"] = ""   # init safely
 
 # --- Helper Functions ---
 def ask_model(messages, model="gpt-4o-mini"):
@@ -113,14 +115,14 @@ if page == "💬 Chat":
 
     chat_input = st.text_input("Say something...", key="chat_input", placeholder="Type here and press Enter...")
 
-    if st.button("Send", key="send_btn") and chat_input.strip():
+    if st.button("Send", key="send_btn") and st.session_state["chat_input"].strip():
         # Add user msg
-        st.session_state["messages"].append({"role": "user", "content": chat_input})
+        st.session_state["messages"].append({"role": "user", "content": st.session_state["chat_input"]})
         # Model reply
         reply = ask_model(st.session_state["messages"])
         st.session_state["messages"].append({"role": "assistant", "content": reply})
-        # Clear input + refresh
-        st.session_state["chat_input"] = ""
+        # Reset input safely
+        st.session_state.chat_input = ""
         st.rerun()
 
 # --- Call Page ---
