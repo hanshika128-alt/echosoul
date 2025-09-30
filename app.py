@@ -1,6 +1,7 @@
 import streamlit as st
 import json, os, uuid, datetime
 from openai import OpenAI
+from pathlib import Path
 
 # Initialize OpenAI client
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -12,7 +13,7 @@ def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    return {"memories": [], "vault": {}, "profile": {"name": "User"}}
+    return {"memories": [], "vault": {}, "profile": {"name": "User"}, "voice_file": None}
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
@@ -38,6 +39,17 @@ if uploaded_wall:
         f.write(uploaded_wall.read())
     st.session_state["wallpaper"] = wall_path
     st.success("Wallpaper updated!")
+
+# Custom Voice Upload
+st.sidebar.subheader("🎙 Custom Voice")
+uploaded_voice = st.sidebar.file_uploader("Upload EchoSoul voice sample", type=["mp3", "wav"])
+if uploaded_voice:
+    voice_path = f"voice_{uploaded_voice.name}"
+    with open(voice_path, "wb") as f:
+        f.write(uploaded_voice.read())
+    data["voice_file"] = voice_path
+    save_data(data)
+    st.success("Voice updated!")
 
 # Background CSS
 if "wallpaper" in st.session_state:
@@ -69,7 +81,7 @@ if choice == "💬 Chat":
 
             # Persistent memory context
             memory_context = " ".join([m["text"] for m in data["memories"][-5:]])
-            convo = [{"role": "system", "content": f"You are EchoSoul, adaptive, remembering. Memory: {memory_context}"}]
+            convo = [{"role": "system", "content": f"You are EchoSoul. Memory: {memory_context}"}]
             convo += st.session_state["history"]
 
             response = client.chat.completions.create(
@@ -79,8 +91,8 @@ if choice == "💬 Chat":
             reply = response.choices[0].message.content
             st.session_state["history"].append({"role": "assistant", "content": reply})
 
-            # Clear chat input after sending
-            st.session_state["chat_input"] = ""
+            # Clear input properly
+            st.experimental_rerun()
 
     for h in st.session_state["history"]:
         if h["role"] == "user":
@@ -90,15 +102,12 @@ if choice == "💬 Chat":
 
 # ------------------ Call ------------------
 elif choice == "📞 Call":
-    st.subheader("Talk with EchoSoul")
+    st.subheader("Real Call with EchoSoul")
 
-    # Voice selection
-    voice_choice = st.selectbox("Choose EchoSoul's Voice", ["Neutral", "Female", "Male"])
-
-    call_input = st.text_input("What do you want to say? (simulating call)", key="call_input")
+    call_input = st.text_input("Say something...")
     if st.button("Speak"):
         if call_input.strip():
-            convo = [{"role": "system", "content": "You are EchoSoul, adaptive voice persona."}]
+            convo = [{"role": "system", "content": "You are EchoSoul, adaptive companion."}]
             convo.append({"role": "user", "content": call_input})
 
             response = client.chat.completions.create(
@@ -107,32 +116,20 @@ elif choice == "📞 Call":
             )
             reply = response.choices[0].message.content
 
-            # Map voice choice to JS voice names (depends on browser voices)
-            voice_map = {
-                "Neutral": "",
-                "Female": "Google UK English Female",
-                "Male": "Google UK English Male"
-            }
-            chosen_voice = voice_map.get(voice_choice, "")
+            st.success(f"EchoSoul: {reply}")
 
-            speak_js = f"""
-            <script>
-            (function(){{
-              var utter = new SpeechSynthesisUtterance("{reply}");
-              utter.rate = 1;
-              utter.pitch = 1;
-              var voices = window.speechSynthesis.getVoices();
-              var selectedVoice = voices.find(v => v.name === "{chosen_voice}");
-              if (selectedVoice) {{
-                  utter.voice = selectedVoice;
-              }}
-              window.speechSynthesis.cancel();
-              window.speechSynthesis.speak(utter);
-            }})();
-            </script>
-            """
-            st.markdown(speak_js, unsafe_allow_html=True)
-            st.success(f"EchoSoul says: {reply}")
+            # Generate speech (if custom voice not uploaded, fallback to TTS)
+            if data.get("voice_file"):
+                st.audio(data["voice_file"], format="audio/mp3")
+            else:
+                audio_out = f"echo_{uuid.uuid4()}.mp3"
+                with client.audio.speech.with_streaming_response.create(
+                    model="gpt-4o-mini-tts",
+                    voice="alloy",
+                    input=reply
+                ) as response_audio:
+                    response_audio.stream_to_file(audio_out)
+                st.audio(audio_out, format="audio/mp3")
 
 # ------------------ Life Timeline ------------------
 elif choice == "🧠 Life Timeline":
@@ -172,9 +169,10 @@ elif choice == "ℹ️ About":
     st.subheader("About EchoSoul")
     st.write("""
     EchoSoul is your evolving AI companion:
-    - ✅ Remembers your memories
-    - ✅ Talks in adaptive style
-    - ✅ Can be called with voice (choose Male/Female/Neutral)
-    - ✅ Preserves your legacy
-    - ✅ Wallpaper customization
+    - ✅ Persistent Memory
+    - ✅ Adaptive Personality
+    - ✅ Real Voice Calls (choose or upload a custom voice)
+    - ✅ Private Vault
+    - ✅ Life Timeline
+    - ✅ Legacy Mode
     """)
