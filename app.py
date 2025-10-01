@@ -23,7 +23,6 @@ if "chat_input" not in st.session_state:
 
 # --- Helper Functions ---
 def ask_model(messages, model="gpt-4o-mini"):
-    """Send conversation to GPT and return reply"""
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -36,7 +35,6 @@ def ask_model(messages, model="gpt-4o-mini"):
         return f"[Error contacting OpenAI API: {e}]"
 
 def transcribe_audio(file_path):
-    """Transcribe speech to text"""
     try:
         with open(file_path, "rb") as af:
             transcript_resp = client.audio.transcriptions.create(
@@ -48,7 +46,6 @@ def transcribe_audio(file_path):
         return f"[Transcription error: {e}]"
 
 def tts_reply(text, output_path="reply.mp3"):
-    """Generate speech audio from text"""
     try:
         with client.audio.speech.with_streaming_response.create(
             model="gpt-4o-mini-tts",
@@ -95,7 +92,7 @@ if voice_file:
 
 # --- Title ---
 st.markdown(
-    f"<h1 style='text-align:center;color:#7FDBFF;'>EchoSoul — Hi {st.session_state['user_name']}</h1>",
+    f"<h1 style='text-align:center;color:#39ff14;text-shadow:0px 0px 10px #39ff14;'>EchoSoul — Hi {st.session_state['user_name']}</h1>",
     unsafe_allow_html=True
 )
 
@@ -106,7 +103,7 @@ page = st.radio("Navigate", ["💬 Chat", "📞 Call", "🧠 Life Timeline", "�
 if page == "💬 Chat":
     st.subheader("Chat with EchoSoul")
 
-    # Display previous messages
+    # Display chat history
     for msg in st.session_state["messages"]:
         role = msg["role"]
         if role == "user":
@@ -115,16 +112,15 @@ if page == "💬 Chat":
             st.markdown(f"<div style='background:#3498db;color:white;padding:8px;border-radius:10px;margin:5px;'>EchoSoul: {msg['content']}</div>", unsafe_allow_html=True)
 
     # Input box
-    chat_val = st.text_input("Say something...", value=st.session_state["chat_input"], key="chat_box", placeholder="Type here and press Enter...")
+    chat_val = st.text_input("Say something...", key="chat_input", placeholder="Type here and press Enter...")
 
     if st.button("Send", key="send_btn") and chat_val.strip():
         st.session_state["messages"].append({"role": "user", "content": chat_val})
         reply = ask_model(st.session_state["messages"])
         st.session_state["messages"].append({"role": "assistant", "content": reply})
 
-        # clear the input correctly
-        st.session_state["chat_input"] = ""
-        st.session_state["chat_box"] = ""
+        # Clear input safely
+        st.session_state.update({"chat_input": ""})
         st.rerun()
 
 # --- Call Page ---
