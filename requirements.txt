@@ -1,3 +1,7 @@
 streamlit
 openai
-gTTS
+cryptography
+gtts
+pydub
+numpy
+python-dotenv
