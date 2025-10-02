@@ -475,4 +475,4 @@ def page_export():
         writer.writerow(["ts", "type", "text", "tags"])
         for ev in timeline:
             writer.writerow([ev.get("ts",""), ev.get("type",""), ev.get("text",""), ",".join(ev.get("tags",[]))])
-        st.download_button("Download timeline.csv", data=buf.getvalue(), file_name="time"
+        st.download_button("Download timeline.csv"), data=buf.getvalue(), file_name="time"
