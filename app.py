@@ -517,4 +517,5 @@ if openai_key:
         st.sidebar.error("Could not set API key.")
 
 # Quick "call" indicator (like the icon in your screenshot)
-if "messages" in st.session_state:
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
