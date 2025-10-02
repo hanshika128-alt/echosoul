@@ -473,4 +473,4 @@ def brain_mimic_page():
     st.header("Brain Mimic")
     st.write("EchoSoul will try to reply in your voice using examples from your past messages.")
     n = st.slider("Use how many recent user messages as examples?", 1, 20, 6)
-    examples = [m['text'] for m in chats 
+    examples = [m['text'] for m in chats]
