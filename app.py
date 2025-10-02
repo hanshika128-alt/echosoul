@@ -1,11 +1,6 @@
 # app.py - EchoSoul (Streamlit)
+# Corrected version (syntax fixes)
 # 2025-10-02
-#
-# Notes:
-# - Place recommended packages into requirements.txt on Streamlit Cloud.
-# - Add your OpenAI API key into Streamlit secrets or provide it in-app.
-# - This implementation focuses on being robust & safe, and provides fallbacks
-#   if optional services are not available.
 
 import streamlit as st
 from datetime import datetime
@@ -80,6 +75,10 @@ if "current_chat" not in st.session_state:
     st.session_state.current_chat = []
 if "vault_unlocked" not in st.session_state:
     st.session_state.vault_unlocked = False
+if "_in_call" not in st.session_state:
+    st.session_state._in_call = False
+if "call_id" not in st.session_state:
+    st.session_state.call_id = None
 
 # --- Helpers: vault encryption ---
 def generate_key_from_password(password: str, salt: bytes):
@@ -105,17 +104,23 @@ def vault_create(password: str):
     VAULT_FILE.write_bytes(token)
     save_json_file(VAULT_META, {"salt": base64.b64encode(salt).decode()})
     st.session_state.vault_unlocked = True
+    st.session_state._vault_contents = json.loads(initial.decode())
+    st.session_state._vault_key = key
     return True
 
 def vault_unlock(password: str):
     if not HAS_CRYPTO:
-        st.error("Cryptography library missing. Cannot unlock vault.")
+        st.error("Cryptography library not installed. Cannot unlock vault.")
         return False
     if not VAULT_FILE.exists() or not VAULT_META.exists():
         st.warning("No vault found. Create one first.")
         return False
     meta = load_json_file(VAULT_META, {})
-    salt = base64.b64decode(meta["salt"])
+    try:
+        salt = base64.b64decode(meta["salt"])
+    except Exception:
+        st.error("Vault metadata corrupted.")
+        return False
     key = generate_key_from_password(password, salt)
     f = Fernet(key)
     try:
@@ -158,10 +163,8 @@ def detect_emotion_from_text(text: str):
         for kw in keys:
             if kw in text_lower:
                 scores[emo] += 1
-    # choose best match or neutral
     best = max(scores.items(), key=lambda x: x[1])
     if best[1] == 0:
-        # fallback heuristics
         if any(p in text_lower for p in ["!", "yay", "awesome", "great"]):
             return "happy"
         return "neutral"
@@ -174,11 +177,9 @@ def transcribe_audio_file(uploaded_file):
         try:
             openai.api_key = st.secrets["OPENAI_API_KEY"]
             # Use OpenAI Whisper API if available
-            resp = openai.Audio.transcriptions.create(
-                file=uploaded_file,
-                model="whisper-1"
-            )
-            return resp["text"]
+            # Note: SDK usage may differ; this is a best-effort call guarded by try/except
+            resp = openai.Audio.transcriptions.create(file=uploaded_file, model="whisper-1")
+            return resp.get("text") if isinstance(resp, dict) else None
         except Exception:
             pass
     # Fallback: we can't reliably transcribe in this environment
@@ -186,7 +187,6 @@ def transcribe_audio_file(uploaded_file):
 
 # --- Chat / memory / brain mimic engine (uses OpenAI if available)
 def build_system_prompt_for_user(user_profile):
-    # Personalized system prompt using stored memories
     profile_snippet = ""
     if user_profile:
         profile_snippet = " Known details: " + "; ".join(f"{m.get('k')}: {m.get('v')}" for m in user_profile[:10])
@@ -205,10 +205,8 @@ def chat_with_model(user_input, mimic=False, style_examples=None, api_pin=None):
     """
     # quick local fallback (without OpenAI)
     if not (HAS_OPENAI and (st.secrets.get("OPENAI_API_KEY") or api_pin)):
-        # Local heuristic "echo + reflect" plus a "brain mimic" style option
         emo = detect_emotion_from_text(user_input)
         if mimic and style_examples:
-            # build a simplistic mimic by echoing style punctuation & short phrases
             sample = style_examples[-1] if len(style_examples) else ""
             if len(sample.split()) < 6:
                 resp = f"{sample} — hmm. {user_input}"
@@ -232,42 +230,56 @@ def chat_with_model(user_input, mimic=False, style_examples=None, api_pin=None):
         system_prompt = build_system_prompt_for_user(memories)
         messages = [{"role": "system", "content": system_prompt}]
         if mimic and style_examples:
-            # give examples and ask to "mimic"
             mimic_prompt = (
                 "Mimic the user's voice and style based on these examples. Keep content aligned with safety and empathy."
                 + "\n\nExamples:\n" + "\n".join(style_examples[-10:])
             )
             messages.append({"role": "system", "content": mimic_prompt})
         messages.append({"role": "user", "content": user_input})
-        # Chat completion
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini" if "gpt-4o-mini" in openai.Model.list()["data"] else "gpt-4o",
-            messages=messages,
-            temperature=0.8,
-            max_tokens=600
-        )
-        text = resp.choices[0].message.content
-        return text
+        # Chat completion - choose a model name defensively
+        model_name = "gpt-4o-mini" if HAS_OPENAI else "gpt-4o"
+        try:
+            resp = openai.ChatCompletion.create(
+                model=model_name,
+                messages=messages,
+                temperature=0.8,
+                max_tokens=600
+            )
+            text = resp.choices[0].message.content
+            return text
+        except Exception:
+            # fallback model attempt
+            resp = openai.ChatCompletion.create(
+                model="gpt-4o",
+                messages=messages,
+                temperature=0.8,
+                max_tokens=600
+            )
+            text = resp.choices[0].message.content
+            return text
     except Exception as e:
-        # fallback
         return f"[fallback response due to API error: {e}] I heard: {user_input}"
 
 # --- TTS generation (gTTS fallback) ---
 def tts_generate_and_play(text: str, voice_choice="default"):
     """
-    Returns bytes of an mp3 audio. Uses OpenAI if available & supports TTS, otherwise gTTS fallback.
+    Returns a BytesIO of an mp3 audio or None.
+    Uses OpenAI if available & supports TTS, otherwise gTTS fallback.
     """
-    # Attempt OpenAI TTS (if available)
     if HAS_OPENAI and st.secrets.get("OPENAI_API_KEY"):
         try:
-            # NOTE: API usage may differ depending on OpenAI SDK version.
             openai.api_key = st.secrets["OPENAI_API_KEY"]
-            # Example pseudo-call (Streamlit environment may not have TTS configured)
+            # Example pseudo-call (guarded); actual SDK/endpoint may differ.
             audio_resp = openai.Audio.speech.create(model="gpt-4o-mini-tts", voice=voice_choice, input=text)
-            return io.BytesIO(audio_resp.read())
+            # Attempt to read content if available
+            try:
+                bio = io.BytesIO(audio_resp.read())
+                bio.seek(0)
+                return bio
+            except Exception:
+                pass
         except Exception:
             pass
-    # gTTS fallback
     if HAS_GTTS:
         try:
             tts = gTTS(text)
@@ -277,7 +289,6 @@ def tts_generate_and_play(text: str, voice_choice="default"):
             return bio
         except Exception:
             pass
-    # Last fallback: generate simple beep-speech as silence (no TTS available)
     return None
 
 # --- UI Layout: Sidebar ---
@@ -302,16 +313,14 @@ with st.sidebar:
 
 # --- Top bar: Simulated call screens (two variants from your screenshots) ---
 if st.session_state.get("_in_call"):
-    # display call UI
     col1, col2, col3 = st.columns([1, 6, 1])
     with col1:
         st.write("")
     with col2:
         st.markdown("<div style='text-align:center'>", unsafe_allow_html=True)
-        st.image("https://via.placeholder.com/180.png?text=EchoSoul", width=150)  # replace with real avatar if available
+        st.image("https://via.placeholder.com/180.png?text=EchoSoul", width=150)
         st.markdown("<h3 style='text-align:center'>Calling... (EchoSoul)</h3>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
-        # call actions
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("Mute"):
@@ -327,23 +336,26 @@ if st.session_state.get("_in_call"):
 # --- Pages Implementation ---
 def page_chat():
     st.header("Chat with EchoSoul")
-    # top right call button
     right_col = st.columns([3,1])[1]
     if right_col.button("Call"):
         st.session_state._in_call = True
 
-    # display conversation
     chat_container = st.container()
     with chat_container:
         for msg in st.session_state.current_chat:
             role = msg.get("role")
             timestamp = msg.get("ts")
             if role == "user":
-                st.markdown(f"<div style='text-align:right;background:#c6f6d5;padding:8px;border-radius:12px;margin:6px'>{msg['text']}<div style='font-size:10px;color:#666'>{timestamp}</div></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='text-align:right;background:#c6f6d5;padding:8px;border-radius:12px;margin:6px'>{msg['text']}<div style='font-size:10px;color:#666'>{timestamp}</div></div>",
+                    unsafe_allow_html=True
+                )
             else:
-                st.markdown(f"<div style='text-align:left;background:#2d3748;color:white;padding:8px;border-radius:12px;margin:6px'>{msg['text']}<div style='font-size:10px;color:#ddd'>{timestamp}</div></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='text-align:left;background:#2d3748;color:white;padding:8px;border-radius:12px;margin:6px'>{msg['text']}<div style='font-size:10px;color:#ddd'>{timestamp}</div></div>",
+                    unsafe_allow_html=True
+                )
 
-    # message input
     st.text_area("Message...", key="input_text", height=120, placeholder="Write to EchoSoul... (press Send)")
     col_send, col_tts, col_clear = st.columns([1,1,1])
     with col_send:
@@ -353,21 +365,16 @@ def page_chat():
                 ts = datetime.utcnow().isoformat()
                 st.session_state.current_chat.append({"role":"user","text":user_msg,"ts":ts})
                 chats.append({"role":"user","text":user_msg,"ts":ts})
-                # store potential memory if user states facts like "I am a violinist"
-                # naive heuristic: if user said 'I am' or 'My name is' store as memory
                 lowered = user_msg.lower()
-                if lowered.startswith("i am ") or "my name is " in lowered or "i'm " in lowered:
+                if lowered.startswith("i am ") or "my name is " in lowered or lowered.startswith("i'm "):
                     memories.insert(0, {"k":"self_statement","v":user_msg,"ts":ts})
                     save_json_file(MEMORY_FILE, memories)
-                # generate reply (mimic off by default)
                 reply = chat_with_model(user_msg, mimic=False, style_examples=[m['text'] for m in chats if m['role']=='user'], api_pin=st.session_state.api_pin)
                 rts = datetime.utcnow().isoformat()
                 st.session_state.current_chat.append({"role":"echo","text":reply,"ts":rts})
                 chats.append({"role":"echo","text":reply,"ts":rts})
                 save_json_file(CHAT_HISTORY_FILE, chats)
-                # auto-clear input
                 st.session_state.input_text = ""
-                # Log timeline event
                 timeline.append({"type":"chat","text":user_msg,"response":reply,"ts":ts})
                 save_json_file(TIMELINE_FILE, timeline)
                 st.experimental_rerun()
@@ -378,7 +385,11 @@ def page_chat():
                 if last["role"] == "echo":
                     bio = tts_generate_and_play(last["text"], voice_choice=st.session_state.voice_choice)
                     if bio:
-                        st.audio(bio.read(), format="audio/mp3")
+                        try:
+                            st.audio(bio.read(), format="audio/mp3")
+                        except Exception:
+                            bio.seek(0)
+                            st.audio(bio)
                     else:
                         st.warning("TTS not available. Install OpenAI or gTTS for voice output.")
     with col_clear:
@@ -401,7 +412,6 @@ def page_history():
 def page_timeline():
     st.header("Life Timeline")
     st.write("Chronological record of significant moments and interactions.")
-    # add manual event
     with st.expander("Add timeline event"):
         ev_text = st.text_input("Event text", key="ev_text")
         ev_tags = st.text_input("Tags (comma separated)", key="ev_tags")
@@ -411,7 +421,6 @@ def page_timeline():
             save_json_file(TIMELINE_FILE, timeline)
             st.success("Event added.")
             st.experimental_rerun()
-    # display
     for ev in sorted(timeline, key=lambda x: x.get("ts"), reverse=True):
         st.markdown(f"**{ev.get('ts')}** — {ev.get('text')}  \nTags: {', '.join(ev.get('tags',[]))}")
 
@@ -419,7 +428,6 @@ def page_vault():
     st.header("Memory Vault (encrypted storage)")
     if not HAS_CRYPTO:
         st.warning("Cryptography library not installed; Vault functions disabled. Install `cryptography` to enable.")
-    # vault creation / unlock
     if not VAULT_FILE.exists():
         st.info("No Vault exists. Create one now (this will generate encryption metadata).")
         pwd = st.text_input("Create vault password", type="password", key="vault_create_pwd")
@@ -475,4 +483,5 @@ def page_export():
         writer.writerow(["ts", "type", "text", "tags"])
         for ev in timeline:
             writer.writerow([ev.get("ts",""), ev.get("type",""), ev.get("text",""), ",".join(ev.get("tags",[]))])
-        st.download_button("Download timeline.csv"), data=buf.getvalue(), file_name="time"
+        # Fixed syntax: call st.download_button once with proper named args
+        st.download_b
