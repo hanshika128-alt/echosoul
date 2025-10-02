@@ -1,7 +1,7 @@
 streamlit
-openai
 cryptography
-gtts
-pydub
-numpy
-python-dotenv
+pandas
+python-dateutil
+gTTS
+nltk
+openai
