@@ -2,13 +2,15 @@ import streamlit as st
 import sqlite3
 import os
 from datetime import datetime
+import base64
 from dateutil import parser as dateparser
 import openai
-import base64
+import tempfile
+import uuid
 
-# ==============================
+# ======================
 # DB Setup
-# ==============================
+# ======================
 DB_FILE = "echosoul.db"
 
 def init_db():
@@ -35,9 +37,9 @@ def init_db():
 
 init_db()
 
-# ==============================
-# DB Functions
-# ==============================
+# ======================
+# DB Helpers
+# ======================
 def save_chat(role, content):
     ts = datetime.utcnow().isoformat()
     conn = sqlite3.connect(DB_FILE)
@@ -87,10 +89,10 @@ def load_vault():
     conn.close()
     return [{"note": n, "timestamp": t} for n, t in rows]
 
-# ==============================
-# LLM Chat
-# ==============================
-def chat_with_llm(user_input, system="You are EchoSoul, a kind, supportive AI companion."):
+# ======================
+# AI Functions
+# ======================
+def chat_with_llm(user_input, system="You are EchoSoul, a supportive AI companion."):
     try:
         client = openai.OpenAI(api_key=st.session_state.get("api_key"))
         resp = client.chat.completions.create(
@@ -104,13 +106,38 @@ def chat_with_llm(user_input, system="You are EchoSoul, a kind, supportive AI co
     except Exception as e:
         return f"(Error: {e})"
 
-# ==============================
-# Views
-# ==============================
-def chat_view():
-    st.header("Chat — EchoSoul")
+def mimic_user_style(user_input):
+    history = load_chats()
+    combined = "\n".join([f"{r['role']}: {r['content']}" for r in history[-50:]])  # last 50 for style
+    sys = f"You are EchoSoul. Reply as if you were the user, based on their past messages:\n\n{combined}"
+    return chat_with_llm(user_input, system=sys)
 
-    # Show history
+# ======================
+# Voice Functions
+# ======================
+def tts_generate(text, voice="alloy"):
+    """Generate speech file from text and return filename"""
+    try:
+        client = openai.OpenAI(api_key=st.session_state.get("api_key"))
+        with client.audio.speech.with_streaming_response.create(
+            model="gpt-4o-mini-tts",
+            voice=voice,
+            input=text,
+        ) as response:
+            filename = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.mp3")
+            response.stream_to_file(filename)
+        return filename
+    except Exception as e:
+        st.error(f"TTS Error: {e}")
+        return None
+
+# ======================
+# Views
+# ======================
+def chat_view():
+    st.header("💬 Chat — EchoSoul")
+
+    # Display chat history
     for m in st.session_state["messages"]:
         role = "👤 You" if m["role"] == "user" else "🤖 EchoSoul"
         ts = dateparser.parse(m["timestamp"]).strftime("%Y-%m-%d %H:%M")
@@ -119,23 +146,24 @@ def chat_view():
     st.markdown("---")
 
     # Input
-    user_input = st.text_input("Type your message:", key="chat_input")
+    user_input = st.text_input("Type your message:", key="chat_input", value="")
     if st.button("Send"):
         if user_input.strip():
             txt = user_input.strip()
             save_chat("user", txt)
             reply = chat_with_llm(txt)
             save_chat("assistant", reply)
+            st.session_state["chat_input"] = ""  # clear input
 
 def history_view():
-    st.header("Chat History")
+    st.header("📜 Chat History")
     rows = load_chats()
     for r in rows:
         role = "👤 You" if r["role"] == "user" else "🤖 EchoSoul"
         st.markdown(f"**{role}** ({r['timestamp']}): {r['content']}")
 
 def timeline_view():
-    st.header("Life Timeline")
+    st.header("📅 Life Timeline")
     event = st.text_input("Add a life event:")
     if st.button("Save Event"):
         if event.strip():
@@ -148,9 +176,9 @@ def timeline_view():
         st.markdown(f"📌 **{ts}** — {e['event']}")
 
 def vault_view():
-    st.header("Vault 🔒")
+    st.header("🔐 Private Vault")
     pw = st.text_input("Enter password:", type="password")
-    if pw == "1234":  # change this
+    if pw == "1234":  # change this to secure method
         st.success("Vault unlocked ✅")
         note = st.text_area("Write a private note:")
         if st.button("Save Note"):
@@ -165,7 +193,7 @@ def vault_view():
         st.error("Wrong password!")
 
 def export_view():
-    st.header("Export Data")
+    st.header("📤 Export Data")
     rows = load_chats()
     content = "\n".join([f"{r['role']} ({r['timestamp']}): {r['content']}" for r in rows])
     b64 = base64.b64encode(content.encode()).decode()
@@ -173,36 +201,48 @@ def export_view():
     st.markdown(href, unsafe_allow_html=True)
 
 def brain_mimic_view():
-    st.header("Brain Mimic 🧠")
-    history = load_chats()
-    if not history:
-        st.info("No chat history yet.")
-        return
-    combined = "\n".join([f"{r['role']}: {r['content']}" for r in history])
+    st.header("🧠 Brain Mimic")
     user_input = st.text_input("Ask something in your style:")
     if st.button("Mimic Reply"):
         if user_input.strip():
-            sys = f"You are EchoSoul. Reply as if you were the user, based on their past messages:\n\n{combined}"
-            reply = chat_with_llm(user_input, system=sys)
+            reply = mimic_user_style(user_input)
             st.markdown(f"🧠 Mimic: {reply}")
 
 def call_view():
     st.header("📞 Call Simulation")
-    st.info("This is a simple voice simulation using text-to-speech.")
+    st.info("Talk with EchoSoul in real-time voice simulation.")
+
+    voice = st.selectbox("Choose EchoSoul's voice:", ["alloy", "verse", "sage", "ember"])
 
     user_input = st.text_input("Say something (simulate voice):", key="call_input")
     if st.button("Send to Call"):
         if user_input.strip():
             reply = chat_with_llm(user_input)
             st.success(f"EchoSoul: {reply}")
+            audio_file = tts_generate(reply, voice)
+            if audio_file:
+                st.audio(audio_file)
 
 def about_view():
-    st.header("About EchoSoul")
-    st.write("EchoSoul is your personal AI companion with memory, timeline, vault, brain mimic, and call simulation.")
+    st.header("ℹ️ About EchoSoul")
+    st.write("""
+    EchoSoul is your evolving AI companion with:
+    - Persistent Memory
+    - Adaptive Personality
+    - Emotion Recognition
+    - Life Timeline
+    - Custom Conversation Style
+    - Private Vault
+    - Legacy Mode
+    - Brain Mimic
+    - Soul Resonance Network
+    - Consciousness Mirror
+    - Voice Calls
+    """)
 
-# ==============================
+# ======================
 # Main
-# ==============================
+# ======================
 def main():
     st.set_page_config(page_title="EchoSoul", layout="wide")
 
@@ -212,7 +252,7 @@ def main():
 
     with st.sidebar:
         st.title("EchoSoul")
-        st.caption("Personal AI companion — persistent memory, timeline, vault, and voice calls.")
+        st.caption("Personal AI companion with memory, vault, timeline & calls.")
 
         choice = st.radio("Navigate", ["Chat", "Chat history", "Life timeline", "Vault", "Export", "Brain mimic", "Call", "About"])
 
